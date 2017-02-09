@@ -3,3 +3,8 @@
 ._*
 *~
 /build/shared/reference.zip
+
+*.class
+*.cache
+target/
+
