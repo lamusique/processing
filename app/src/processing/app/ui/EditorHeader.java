@@ -3,8 +3,8 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2013-15 The Processing Foundation
-  Copyright (c) 2004-13 Ben Fry and Casey Reas
+  Copyright (c) 2012-19 The Processing Foundation
+  Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
   This program is free software; you can redistribute it and/or modify
@@ -44,26 +44,25 @@ import processing.app.SketchCode;
  */
 public class EditorHeader extends JComponent {
   // height of this tab bar
-  static final int HIGH = 29;
+  static final int HIGH = Toolkit.zoom(29);
 
-  static final int ARROW_TAB_WIDTH = 18;
-  static final int ARROW_TOP = 11;
-  static final int ARROW_BOTTOM = 18;
-  static final int ARROW_WIDTH = 6;
+  static final int ARROW_TAB_WIDTH = Toolkit.zoom(18);
+  static final int ARROW_TOP = Toolkit.zoom(11);
+  static final int ARROW_BOTTOM = Toolkit.zoom(18);
+  static final int ARROW_WIDTH = Toolkit.zoom(6);
 
-  static final int CURVE_RADIUS = 6;
+  static final int CURVE_RADIUS = Toolkit.zoom(6);
 
   static final int TAB_TOP = 0;
-  static final int TAB_BOTTOM = 27;
+  static final int TAB_BOTTOM = Toolkit.zoom(27);
   // amount of extra space between individual tabs
-  static final int TAB_BETWEEN = 3;
+  static final int TAB_BETWEEN = Toolkit.zoom(3);
   // amount of margin on the left/right for the text on the tab
-  static final int TEXT_MARGIN = 16;
+  static final int TEXT_MARGIN = Toolkit.zoom(16);
   // width of the tab when no text visible
   // (total tab width will be this plus TEXT_MARGIN*2)
-  static final int NO_TEXT_WIDTH = 16;
+  static final int NO_TEXT_WIDTH = Toolkit.zoom(16);
 
-//  Color bgColor;
   Color textColor[] = new Color[2];
   Color tabColor[] = new Color[2];
   Color modifiedColor;
@@ -185,11 +184,7 @@ public class EditorHeader extends JComponent {
       sizeH = size.height;
       imageW = sizeW;
       imageH = sizeH;
-      if (Toolkit.highResDisplay()) {
-        offscreen = createImage(imageW*2, imageH*2);
-      } else {
-        offscreen = createImage(imageW, imageH);
-      }
+      offscreen = Toolkit.offscreenGraphics(this, imageW, imageH);
     }
 
     Graphics g = offscreen.getGraphics();
@@ -199,6 +194,7 @@ public class EditorHeader extends JComponent {
     }
 
     Graphics2D g2 = Toolkit.prepareGraphics(g);
+//    Toolkit.dpiStroke(g2);
 
     g.drawImage(gradient, 0, 0, imageW, imageH, this);
 
@@ -265,7 +261,8 @@ public class EditorHeader extends JComponent {
     g.setColor(tabColor[SELECTED]);
     // can't be done with lines, b/c retina leaves tiny hairlines
     g.fillRect(Editor.LEFT_GUTTER, TAB_BOTTOM,
-               editor.getTextArea().getWidth() - Editor.LEFT_GUTTER, 2);
+               editor.getTextArea().getWidth() - Editor.LEFT_GUTTER,
+               Toolkit.zoom(2));
 
     // draw the tab for the menu
     g.setColor(tabColor[UNSELECTED]);
@@ -497,47 +494,29 @@ public class EditorHeader extends JComponent {
 
     //  KeyEvent.VK_LEFT and VK_RIGHT will make Windows beep
 
-    final String prevTab = Language.text("editor.header.previous_tab");
-    if (Platform.isLinux()) {
-      item = Toolkit.newJMenuItem(prevTab, KeyEvent.VK_PAGE_UP);
-    } else {
-      item = Toolkit.newJMenuItemAlt(prevTab, KeyEvent.VK_LEFT);
-    }
+    mapKey = "editor.header.previous_tab";
+    item = Toolkit.newJMenuItemExt(mapKey);
     action = new AbstractAction() {
       @Override
       public void actionPerformed(ActionEvent e) {
         editor.getSketch().handlePrevCode();
       }
     };
-    mapKey = "editor.header.previous_tab";
-    if (Platform.isLinux()) {
-      keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_PAGE_UP, Toolkit.SHORTCUT_KEY_MASK);
-    } else {
-      keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, Toolkit.SHORTCUT_ALT_KEY_MASK);
-    }
+    keyStroke = item.getAccelerator();
     inputMap.put(keyStroke, mapKey);
     actionMap.put(mapKey, action);
     item.addActionListener(action);
     menu.add(item);
 
-    final String nextTab = Language.text("editor.header.next_tab");
-    if (Platform.isLinux()) {
-      item = Toolkit.newJMenuItem(nextTab, KeyEvent.VK_PAGE_DOWN);
-    } else {
-      item = Toolkit.newJMenuItemAlt(nextTab, KeyEvent.VK_RIGHT);
-    }
+    mapKey = "editor.header.next_tab";
+    item = Toolkit.newJMenuItemExt(mapKey);
     action = new AbstractAction() {
       @Override
       public void actionPerformed(ActionEvent e) {
         editor.getSketch().handleNextCode();
       }
     };
-    mapKey = "editor.header.next_tab";
-    if (Platform.isLinux()) {
-      keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_PAGE_DOWN, Toolkit.SHORTCUT_KEY_MASK);
-    } else {
-      keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, Toolkit.SHORTCUT_ALT_KEY_MASK);
-    }
+    keyStroke = item.getAccelerator();
     inputMap.put(keyStroke, mapKey);
     actionMap.put(mapKey, action);
     item.addActionListener(action);

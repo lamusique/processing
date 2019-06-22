@@ -2,7 +2,8 @@
 
 /*
   Part of the Processing project - http://processing.org
-  Copyright (c) 2012-15 The Processing Foundation
+
+  Copyright (c) 2012-19 The Processing Foundation
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License version 2
@@ -39,16 +40,12 @@ import javax.swing.table.TableColumn;
 
 import processing.app.Language;
 import processing.app.Mode;
+import processing.app.Problem;
 import processing.app.ui.Editor;
 
 
 public class ErrorTable extends JTable {
   Editor editor;
-
-  public interface Entry {
-    public boolean isError();
-    public boolean isWarning();
-  }
 
   static final String[] columnNames = {
     "",  // the blank column used for spacing
@@ -66,9 +63,9 @@ public class ErrorTable extends JTable {
   Color headerColor;
   Color headerBgColor;
 
-  Font rowFont;
-  Color rowColor;
-  Color rowBgColor;
+//  Font rowFont;
+//  Color rowColor;
+//  Color rowBgColor;
 
 
   public ErrorTable(final Editor editor) {
@@ -121,6 +118,7 @@ public class ErrorTable extends JTable {
     });
 
     header.setReorderingAllowed(false);
+    setFillsViewportHeight(true);
     ToolTipManager.sharedInstance().registerComponent(this);
   }
 
@@ -131,9 +129,9 @@ public class ErrorTable extends JTable {
   }
 
 
-  public void addRow(Entry data, String message, String filename, String line) {
+  public void addRow(Problem data, String msg, String filename, String line) {
     DefaultTableModel dtm = (DefaultTableModel) getModel();
-    dtm.addRow(new Object[] { data, message, filename, line });
+    dtm.addRow(new Object[] { data, msg, filename, line });
   }
 
 
@@ -162,6 +160,18 @@ public class ErrorTable extends JTable {
                                                    boolean selected,
                                                    boolean focused,
                                                    int row, int column) {
+
+      // Adjust height for magnified displays. The font is scaled properly,
+      // but the rows don't automatically use the scaled preferred size.
+      // https://github.com/processing/processing/issues/4936
+      int high = getPreferredSize().height;
+      if (high != 0) {
+        JTableHeader header = table.getTableHeader();
+        int current = header.getSize().height;
+        if (current != high) {
+          table.setPreferredSize(new Dimension(table.getWidth(), high));
+        }
+      }
       setText(value == null ? "" : value.toString());
       return this;
     }
@@ -179,7 +189,6 @@ public class ErrorTable extends JTable {
     Color bgColorError;
     Color bgColorWarning;
 
-//    int indicatorSize;
     Color errorIndicatorColor;
     Color warningIndicatorColor;
 
@@ -194,7 +203,6 @@ public class ErrorTable extends JTable {
       bgColorError = mode.getColor("errors.selection.error.bgcolor");
       bgColorWarning = mode.getColor("errors.selection.warning.bgcolor");
 
-//      indicatorSize = mode.getInteger("errors.indicator.size");
       errorIndicatorColor = mode.getColor("errors.indicator.error.color");
       warningIndicatorColor = mode.getColor("errors.indicator.warning.color");
 
@@ -206,7 +214,18 @@ public class ErrorTable extends JTable {
                                                    boolean selected,
                                                    boolean focused,
                                                    int row, int column) {
-      Entry entry = (Entry) table.getValueAt(row, DATA_COLUMN);
+      Problem entry = (Problem) table.getValueAt(row, DATA_COLUMN);
+
+      // Adjust row height for magnified displays. The font is scaled properly,
+      // but the rows don't automatically use the scaled preferred size.
+      // https://github.com/processing/processing/issues/4936
+      int high = getPreferredSize().height;
+      if (high != 0) {
+        int current = table.getRowHeight();
+        if (current != high) {
+          table.setRowHeight(high);
+        }
+      }
 
       if (selected) {
         setForeground(textColorSelected);

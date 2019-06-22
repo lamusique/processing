@@ -90,6 +90,8 @@ public class PSurfaceAWT extends PSurfaceNone {
   int sketchWidth;
   int sketchHeight;
 
+  int windowScaleFactor;
+
 
   public PSurfaceAWT(PGraphics graphics) {
     //this.graphics = graphics;
@@ -224,7 +226,7 @@ public class PSurfaceAWT extends PSurfaceNone {
       if (!oldSize.equals(newSize)) {
 //        System.out.println("validate() render old=" + oldSize + " -> new=" + newSize);
         oldSize = newSize;
-        sketch.setSize(newSize.width, newSize.height);
+        sketch.setSize(newSize.width / windowScaleFactor, newSize.height / windowScaleFactor);
 //        try {
         render();
 //        } catch (IllegalStateException ise) {
@@ -423,8 +425,11 @@ public class PSurfaceAWT extends PSurfaceNone {
     sketch.displayWidth = screenRect.width;
     sketch.displayHeight = screenRect.height;
 
-    sketchWidth = sketch.sketchWidth();
-    sketchHeight = sketch.sketchHeight();
+    windowScaleFactor = PApplet.platform == PConstants.MACOSX ?
+        1 : sketch.pixelDensity;
+
+    sketchWidth = sketch.sketchWidth() * windowScaleFactor;
+    sketchHeight = sketch.sketchHeight() * windowScaleFactor;
 
     boolean fullScreen = sketch.sketchFullScreen();
     // Removing the section below because sometimes people want to do the
@@ -481,7 +486,7 @@ public class PSurfaceAWT extends PSurfaceNone {
     // http://dev.processing.org/bugs/show_bug.cgi?id=908
 
     frame.add(canvas);
-    setSize(sketchWidth, sketchHeight);
+    setSize(sketchWidth / windowScaleFactor, sketchHeight / windowScaleFactor);
 
     /*
     if (fullScreen) {
@@ -940,6 +945,16 @@ public class PSurfaceAWT extends PSurfaceNone {
   // needs to resize the frame, which will resize the canvas, and so on...
   @Override
   public void setSize(int wide, int high) {
+    // When the surface is set to resizable via surface.setResizable(true),
+    // a crash may occur if the user sets the window to size zero.
+    // https://github.com/processing/processing/issues/5052
+    if (high <= 0) {
+      high = 1;
+    }
+    if (wide <= 0) {
+      wide = 1;
+    }
+
 //    if (PApplet.DEBUG) {
 //      //System.out.format("frame visible %b, setSize(%d, %d) %n", frame.isVisible(), wide, high);
 //      new Exception(String.format("setSize(%d, %d)", wide, high)).printStackTrace(System.out);
@@ -954,8 +969,8 @@ public class PSurfaceAWT extends PSurfaceNone {
       return;  // unchanged, don't rebuild everything
     }
 
-    sketchWidth = wide;
-    sketchHeight = high;
+    sketchWidth = wide * windowScaleFactor;
+    sketchHeight = high * windowScaleFactor;
 
 //    canvas.setSize(wide, high);
 //    frame.setSize(wide, high);
@@ -1142,8 +1157,9 @@ public class PSurfaceAWT extends PSurfaceNone {
             // overall size of the window. Perhaps JFrame sets its coord
             // system so that (0, 0) is always the upper-left of the content
             // area. Which seems nice, but breaks any f*ing AWT-based code.
-            setSize(windowSize.width - currentInsets.left - currentInsets.right,
-                    windowSize.height - currentInsets.top - currentInsets.bottom);
+            int w = windowSize.width - currentInsets.left - currentInsets.right;
+            int h = windowSize.height - currentInsets.top - currentInsets.bottom;
+            setSize(w / windowScaleFactor, h / windowScaleFactor);
 
             // correct the location when inset size changes
             setLocation(x - currentInsets.left, y - currentInsets.top);
@@ -1300,19 +1316,10 @@ public class PSurfaceAWT extends PSurfaceNone {
       peButton = PConstants.RIGHT;
     }
 
-    // If running on Mac OS, allow ctrl-click as right mouse. Prior to 0215,
-    // this used isPopupTrigger() on the native event, but that doesn't work
-    // for mouseClicked and mouseReleased (or others).
-    if (PApplet.platform == PConstants.MACOSX) {
-      //if (nativeEvent.isPopupTrigger()) {
-      if ((modifiers & InputEvent.CTRL_MASK) != 0) {
-        peButton = PConstants.RIGHT;
-      }
-    }
-
     sketch.postEvent(new MouseEvent(nativeEvent, nativeEvent.getWhen(),
                                     peAction, peModifiers,
-                                    nativeEvent.getX(), nativeEvent.getY(),
+                                    nativeEvent.getX() / windowScaleFactor,
+                                    nativeEvent.getY() / windowScaleFactor,
                                     peButton,
                                     peCount));
   }

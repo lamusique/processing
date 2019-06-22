@@ -26,8 +26,6 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 import javax.swing.*;
 import javax.swing.event.TreeExpansionEvent;
@@ -40,17 +38,12 @@ import org.netbeans.swing.outline.*;
 import com.sun.jdi.Value;
 
 import processing.app.Language;
+import processing.app.Messages;
 import processing.app.Mode;
 import processing.mode.java.debug.VariableNode;
 
 
 public class VariableInspector extends JDialog {
-//  static public final int GAP = 13;
-
-//  EditorButton continueButton;
-//  EditorButton stepButton;
-//  EditorButton breakpointButton;
-
   // The tray will be placed at this amount from the top of the editor window,
   // and extend to this amount from the bottom of the editor window.
   static final int VERTICAL_OFFSET = 64;
@@ -88,7 +81,7 @@ public class VariableInspector extends JDialog {
 //  protected Debugger dbg;
 
   /// list of expanded tree paths. (using list to maintain the order of expansion)
-  protected List<TreePath> expandedNodes = new ArrayList<TreePath>();
+  protected List<TreePath> expandedNodes = new ArrayList<>();
 
 
   public VariableInspector(final JavaEditor editor) {
@@ -441,11 +434,12 @@ public class VariableInspector extends JDialog {
         break;
         }
       } catch (NumberFormatException ex) {
-        Logger.getLogger(VariableRowModel.class.getName()).log(Level.INFO, "invalid value entered for {0}: {1}", new Object[]{var.getName(), stringValue});
+        Messages.log(getClass().getName() + " invalid value entered for " +
+                     var.getName() + " -> " + stringValue);
       }
       if (value != null) {
         var.setValue(value);
-        Logger.getLogger(VariableRowModel.class.getName()).log(Level.INFO, "new value set: {0}", var.getStringValue());
+        Messages.log(getClass().getName() + " new value set: " + var.getStringValue());
       }
     }
 
@@ -483,7 +477,7 @@ public class VariableInspector extends JDialog {
       Mode mode = editor.getMode();
       File file = mode.getContentFile(fileName);
       if (!file.exists()) {
-        Logger.getLogger(OutlineRenderer.class.getName()).log(Level.SEVERE, "icon file not found: {0}", file.getAbsolutePath());
+        Messages.log(getClass().getName(), "icon file not found: " + file.getAbsolutePath());
         return null;
       }
       Image allIcons = mode.loadImage(fileName);
@@ -702,7 +696,7 @@ public class VariableInspector extends JDialog {
       // first remove all children of collapsed path
       // this makes sure children do not appear before parents in the list.
       // (children can't be expanded before their parents)
-      List<TreePath> removalList = new ArrayList<TreePath>();
+      List<TreePath> removalList = new ArrayList<>();
       for (TreePath path : expandedNodes) {
         if (path.getParentPath().equals(tee.getPath())) {
           removalList.add(path);
@@ -917,7 +911,7 @@ public class VariableInspector extends JDialog {
    * @return the filtered list.
    */
   protected List<VariableNode> filterNodes(List<VariableNode> nodes, VariableNodeFilter filter) {
-    List<VariableNode> filtered = new ArrayList<VariableNode>();
+    List<VariableNode> filtered = new ArrayList<>();
     for (VariableNode node : nodes) {
       if (filter.accept(node)) {
         filtered.add(node);

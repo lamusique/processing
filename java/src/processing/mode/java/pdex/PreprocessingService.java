@@ -72,7 +72,6 @@ import processing.mode.java.preproc.PdePreprocessor.Mode;
 /**
  * The main error checking service
  */
-@SuppressWarnings("unchecked")
 public class PreprocessingService {
 
   protected final JavaEditor editor;
@@ -93,7 +92,7 @@ public class PreprocessingService {
   private CompletableFuture<PreprocessedSketch> preprocessingTask = new CompletableFuture<>();
 
   private CompletableFuture<?> lastCallback =
-      new CompletableFuture() {{
+      new CompletableFuture<Object>() {{
         complete(null); // initialization block
       }};
 
@@ -275,10 +274,14 @@ public class PreprocessingService {
     for (SketchCode sc : sketch.getCode()) {
       if (sc.isExtension("pde")) {
         tabStartsList.append(workBuffer.length());
-        try {
-          workBuffer.append(sc.getDocumentText());
-        } catch (BadLocationException e) {
-          e.printStackTrace();
+        if (sc.getDocument() != null) {
+          try {
+            workBuffer.append(sc.getDocumentText());
+          } catch (BadLocationException e) {
+            e.printStackTrace();
+          }
+        } else {
+          workBuffer.append(sc.getProgram());
         }
         workBuffer.append('\n');
       }
@@ -308,6 +311,8 @@ public class PreprocessingService {
     // TODO: convert unicode escapes to chars
 
     SourceUtils.scrubCommentsAndStrings(workBuffer);
+
+    result.scrubbedPdeCode = workBuffer.toString();
 
     Mode sketchMode = PdePreprocessor.parseMode(workBuffer);
 
@@ -341,7 +346,7 @@ public class PreprocessingService {
 
       boolean rebuildClassPath = reloadCodeFolder || rebuildLibraryClassPath ||
           prevResult.classLoader == null || prevResult.classPath == null ||
-          prevResult.classPathArray == null || prevResult.searchClassPath == null;
+          prevResult.classPathArray == null || prevResult.searchClassPathArray == null;
 
       if (reloadCodeFolder) {
         codeFolderClassPath = buildCodeFolderClassPath(sketch);
@@ -381,13 +386,12 @@ public class PreprocessingService {
           searchClassPath.addAll(coreLibraryClassPath);
           searchClassPath.addAll(codeFolderClassPath);
 
-          String[] searchClassPathArray = searchClassPath.stream().toArray(String[]::new);
-          result.searchClassPath = classPathFactory.createFromPaths(searchClassPathArray);
+          result.searchClassPathArray = searchClassPath.stream().toArray(String[]::new);
         }
       } else {
         result.classLoader = prevResult.classLoader;
         result.classPath = prevResult.classPath;
-        result.searchClassPath = prevResult.searchClassPath;
+        result.searchClassPathArray = prevResult.searchClassPathArray;
         result.classPathArray = prevResult.classPathArray;
       }
     }
@@ -402,8 +406,7 @@ public class PreprocessingService {
 
     // Prepare advanced transforms which operate on AST
     TextTransform toCompilable = new TextTransform(parsableStage);
-    toCompilable.addAll(SourceUtils.addPublicToTopLevelMethods(parsableCU));
-    toCompilable.addAll(SourceUtils.replaceColorAndFixFloats(parsableCU));
+    toCompilable.addAll(SourceUtils.preprocessAST(parsableCU));
 
     // Transform code to compilable state
     String compilableStage = toCompilable.apply();
@@ -415,7 +418,7 @@ public class PreprocessingService {
         makeAST(parser, compilableStageChars, COMPILER_OPTIONS);
 
     // Get syntax problems from compilable AST
-    result.hasSyntaxErrors = Arrays.stream(compilableCU.getProblems())
+    result.hasSyntaxErrors |= Arrays.stream(compilableCU.getProblems())
         .anyMatch(IProblem::isError);
 
     // Generate bindings after getting problems - avoids
@@ -561,8 +564,8 @@ public class PreprocessingService {
   }
 
 
-  private List<String> buildSketchLibraryClassPath(JavaMode mode,
-                                                   List<ImportStatement> programImports) {
+  static private List<String> buildSketchLibraryClassPath(JavaMode mode,
+                                                          List<ImportStatement> programImports) {
     StringBuilder classPath = new StringBuilder();
 
     programImports.stream()
@@ -583,19 +586,34 @@ public class PreprocessingService {
   }
 
 
-  private List<String> buildJavaRuntimeClassPath() {
+  static private List<String> buildJavaRuntimeClassPath() {
     StringBuilder classPath = new StringBuilder();
 
-    // Java runtime
-    String rtPath = System.getProperty("java.home") +
-        File.separator + "lib" + File.separator + "rt.jar";
-    if (new File(rtPath).exists()) {
-      classPath.append(File.pathSeparator).append(rtPath);
-    } else {
-      rtPath = System.getProperty("java.home") + File.separator + "jre" +
+    { // Java runtime
+      String rtPath = System.getProperty("java.home") +
           File.separator + "lib" + File.separator + "rt.jar";
       if (new File(rtPath).exists()) {
         classPath.append(File.pathSeparator).append(rtPath);
+      } else {
+        rtPath = System.getProperty("java.home") + File.separator + "jre" +
+            File.separator + "lib" + File.separator + "rt.jar";
+        if (new File(rtPath).exists()) {
+          classPath.append(File.pathSeparator).append(rtPath);
+        }
+      }
+    }
+
+    { // JavaFX runtime
+      String jfxrtPath = System.getProperty("java.home") +
+          File.separator + "lib" + File.separator + "ext" + File.separator + "jfxrt.jar";
+      if (new File(jfxrtPath).exists()) {
+        classPath.append(File.pathSeparator).append(jfxrtPath);
+      } else {
+        jfxrtPath = System.getProperty("java.home") + File.separator + "jre" +
+            File.separator + "lib" + File.separator + "ext" + File.separator + "jfxrt.jar";
+        if (new File(jfxrtPath).exists()) {
+          classPath.append(File.pathSeparator).append(jfxrtPath);
+        }
       }
     }
 
@@ -647,7 +665,7 @@ public class PreprocessingService {
   /**
    * Ignore processing packages, java.*.*. etc.
    */
-  private boolean ignorableImport(String packageName) {
+  static private boolean ignorableImport(String packageName) {
     return (packageName.startsWith("java.") ||
             packageName.startsWith("javax."));
   }

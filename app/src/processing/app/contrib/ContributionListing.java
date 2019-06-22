@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2013-15 The Processing Foundation
+  Copyright (c) 2013-16 The Processing Foundation
   Copyright (c) 2011-12 Ben Fry and Casey Reas
 
   This program is free software; you can redistribute it and/or modify
@@ -51,23 +51,25 @@ public class ContributionListing {
   List<AvailableContribution> advertisedContributions;
   Map<String, List<Contribution>> librariesByCategory;
   Map<String, Contribution> librariesByImportHeader;
-  List<Contribution> allContributions;
+  // TODO: Every contribution is getting added twice
+  // and nothing is replaced ever.
+  Set<Contribution> allContributions;
   boolean listDownloaded;
   boolean listDownloadFailed;
   ReentrantLock downloadingListingLock;
 
 
   private ContributionListing() {
-    listeners = new ArrayList<ChangeListener>();
-    advertisedContributions = new ArrayList<AvailableContribution>();
-    librariesByCategory = new HashMap<String, List<Contribution>>();
-    librariesByImportHeader = new HashMap<String, Contribution>();
-    allContributions = new ArrayList<Contribution>();
+    listeners = new ArrayList<>();
+    advertisedContributions = new ArrayList<>();
+    librariesByCategory = new HashMap<>();
+    librariesByImportHeader = new HashMap<>();
+    allContributions = new LinkedHashSet<>();
     downloadingListingLock = new ReentrantLock();
 
     //listingFile = Base.getSettingsFile("contributions.txt");
     listingFile = Base.getSettingsFile(LOCAL_FILENAME);
-    listingFile.setWritable(true);
+    listingFile.setWritable(true, false);
     if (listingFile.exists()) {
       setAdvertisedList(listingFile);
     }
@@ -94,7 +96,6 @@ public class ContributionListing {
     for (Contribution contribution : advertisedContributions) {
       addContribution(contribution);
     }
-    Collections.sort(allContributions, COMPARATOR);
   }
 
 
@@ -137,11 +138,8 @@ public class ContributionListing {
         }
       }
 
-      for (int i = 0; i < allContributions.size(); i++) {
-        if (allContributions.get(i) == oldLib) {
-          allContributions.set(i, newLib);
-        }
-      }
+      allContributions.remove(oldLib);
+      allContributions.add(newLib);
 
       notifyChange(oldLib, newLib);
     }
@@ -161,13 +159,12 @@ public class ContributionListing {
         Collections.sort(list, COMPARATOR);
 
       } else {
-        ArrayList<Contribution> list = new ArrayList<Contribution>();
+        ArrayList<Contribution> list = new ArrayList<>();
         list.add(contribution);
         librariesByCategory.put(category, list);
       }
       allContributions.add(contribution);
       notifyAdd(contribution);
-      Collections.sort(allContributions, COMPARATOR);
     }
   }
 
@@ -213,7 +210,7 @@ public class ContributionListing {
 
 
   protected Set<String> getCategories(Contribution.Filter filter) {
-    Set<String> outgoing = new HashSet<String>();
+    Set<String> outgoing = new HashSet<>();
 
     Set<String> categorySet = librariesByCategory.keySet();
     for (String categoryName : categorySet) {
@@ -232,43 +229,7 @@ public class ContributionListing {
   }
 
 
-//  public List<Contribution> getAllContributions() {
-//    return new ArrayList<Contribution>(allContributions);
-//  }
-
-
-//  public List<Contribution> getLibararies(String category) {
-//    ArrayList<Contribution> libinfos =
-//        new ArrayList<Contribution>(librariesByCategory.get(category));
-//    Collections.sort(libinfos, nameComparator);
-//    return libinfos;
-//  }
-
-
-  protected List<Contribution> getFilteredLibraryList(String category, List<String> filters) {
-    ArrayList<Contribution> filteredList =
-      new ArrayList<Contribution>(allContributions);
-
-    Iterator<Contribution> it = filteredList.iterator();
-    while (it.hasNext()) {
-      Contribution libInfo = it.next();
-      //if (category != null && !category.equals(libInfo.getCategory())) {
-      if (category != null && !libInfo.hasCategory(category)) {
-        it.remove();
-      } else {
-        for (String filter : filters) {
-          if (!matches(libInfo, filter)) {
-            it.remove();
-            break;
-          }
-        }
-      }
-    }
-    return filteredList;
-  }
-
-
-  private boolean matches(Contribution contrib, String typed) {
+  public boolean matches(Contribution contrib, String typed) {
     int colon = typed.indexOf(":");
     if (colon != -1) {
       String isText = typed.substring(0, colon);
@@ -420,7 +381,7 @@ public class ContributionListing {
 //          System.out.println(contribInfo.length() + " " + contribInfo);
 
           File tempContribFile = Base.getSettingsFile("contribs.tmp");
-          tempContribFile.setWritable(true);
+          tempContribFile.setWritable(true, false);
           ContributionManager.download(url, base.getInstalledContribsInfo(),
                                        tempContribFile, progress);
           if (!progress.isCanceled() && !progress.isError()) {
@@ -465,28 +426,6 @@ public class ContributionListing {
   }
 
 
-  /*
-  boolean hasUpdates(Base base) {
-    for (ModeContribution mc : base.getModeContribs()) {
-      if (hasUpdates(mc)) {
-        return true;
-      }
-    }
-    for (Library lib : base.getActiveEditor().getMode().contribLibraries) {
-      if (hasUpdates(lib)) {
-        return true;
-      }
-    }
-    for (ToolContribution tc : base.getToolContribs()) {
-      if (hasUpdates(tc)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  */
-
-
   protected boolean hasUpdates(Contribution contribution) {
     if (contribution.isInstalled()) {
       Contribution advertised = getAvailableContribution(contribution);
@@ -500,14 +439,13 @@ public class ContributionListing {
   }
 
 
-  protected String getLatestVersion(Contribution contribution) {
+  protected String getLatestPrettyVersion(Contribution contribution) {
     Contribution newestContrib = getAvailableContribution(contribution);
     if (newestContrib == null) {
       return null;
     }
     return newestContrib.getPrettyVersion();
   }
-
 
 
   protected boolean hasDownloadedLatestList() {
@@ -522,7 +460,7 @@ public class ContributionListing {
 
   private List<AvailableContribution> parseContribList(File file) {
     List<AvailableContribution> outgoing =
-      new ArrayList<AvailableContribution>();
+      new ArrayList<>();
 
     if (file != null && file.exists()) {
       String[] lines = PApplet.loadStrings(file);
@@ -580,6 +518,11 @@ public class ContributionListing {
         count++;
       }
     }
+    for (Library lib : base.getActiveEditor().getMode().coreLibraries) {
+      if (hasUpdates(lib)) {
+        count++;
+      }
+    }
     for (ToolContribution tc : base.getToolContribs()) {
       if (hasUpdates(tc)) {
         count++;
@@ -600,11 +543,7 @@ public class ContributionListing {
   }
 
 
-  static public Comparator<Contribution> COMPARATOR = new Comparator<Contribution>() {
-    public int compare(Contribution o1, Contribution o2) {
-      return o1.getName().toLowerCase().compareTo(o2.getName().toLowerCase());
-    }
-  };
+  static public Comparator<Contribution> COMPARATOR = Comparator.comparing(o -> o.getName().toLowerCase());
 
 
   public interface ChangeListener {

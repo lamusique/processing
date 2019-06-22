@@ -104,14 +104,14 @@ public class ModeContribution extends LocalContribution {
   public void clearClassLoader(Base base) {
     List<ModeContribution> contribModes = base.getModeContribs();
     int botherToRemove = contribModes.indexOf(this);
-    if (botherToRemove != -1) { // The poor thing isn't even loaded, and we're trying to remove it...
+    // The poor thing isn't even loaded, and we're trying to remove it...
+    if (botherToRemove != -1) {
       contribModes.remove(botherToRemove);
 
       try {
+        // This cast should be safe, since the only case when loader is not a
+        // URLClassLoader is when no archives were found in the first place.
         ((URLClassLoader) loader).close();
-        // The typecast should be safe, since the only case when loader is not of
-        // type URLClassLoader is when no archives were found in the first
-        // place...
       } catch (IOException e) {
         e.printStackTrace();
       }
@@ -126,15 +126,6 @@ public class ModeContribution extends LocalContribution {
 
   public ContributionType getType() {
     return ContributionType.MODE;
-  }
-
-
-  public boolean equals(Object o) {
-    if (o == null || !(o instanceof ModeContribution)) {
-      return false;
-    }
-    ModeContribution other = (ModeContribution) o;
-    return loader.equals(other.loader) && mode.equals(other.getMode());
   }
 
 
@@ -161,8 +152,8 @@ public class ModeContribution extends LocalContribution {
 
       ArrayList<URL> extraUrls = new ArrayList<>();
       if (imports != null && imports.size() > 0) {
-        // if the mode has any dependencies (defined as imports in mode.properties),
-        // add the dependencies to the classloader
+        // if the mode has any dependencies (defined as imports in
+        // mode.properties), add the dependencies to the classloader
 
         HashMap<String, Mode> installedModes = new HashMap<>();
         for(Mode m: base.getModeList()){

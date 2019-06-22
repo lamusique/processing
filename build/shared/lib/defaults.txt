@@ -74,8 +74,6 @@ recent.count = 10
 
 # Default to the native (AWT) file selector where possible
 chooser.files.native = true
-# native Linux file chooser is atrocious, use Swing instead
-chooser.files.native.linux = false
 
 
 # !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -104,6 +102,11 @@ editor.window.height.min.macosx = 450
 editor.window.height.min.windows = 530
 # tested with Raspberry Pi display
 editor.window.height.min.linux = 480
+
+# scaling for the interface (to handle Windows and Linux HiDPI displays)
+editor.zoom = 100%
+# automatically set based on system dpi (only helps on Windows)
+editor.zoom.auto = true
 
 # font size for editor
 #editor.font = Monospaced,plain,12
@@ -164,6 +167,9 @@ editor.watcher.debug = false
 # The window of time (in milliseconds) in which a change won't be counted
 editor.watcher.window = 1500
 
+# Format and search engine to use for online queries
+search.format = https://google.com/search?q=%s
+
 # font choice and size for the console
 #console.font = Monospaced,plain,11
 #console.font.macosx = Monaco,plain,10
@@ -179,7 +185,8 @@ console.auto_clear = true
 
 # set the maximum number of lines remembered by the console
 # the default is 500, lengthen at your own peril
-console.length = 500
+console.scrollback.lines = 500
+console.scrollback.chars = 40000
 
 # Any additional Java options when running. 
 # If you change this and can't run things, it's your own durn fault.
@@ -300,9 +307,6 @@ preproc.substitute_floats = true
 #preproc.substitute_image = false
 #preproc.substitute_font = false
 
-# auto-convert non-ascii chars to unicode escape sequences
-preproc.substitute_unicode = true
-
 # PdePreproc.java
 # writes out the parse tree as parseTree.xml, which can be usefully
 # viewed in (at least) Mozilla or IE.  useful when debugging the preprocessor.
@@ -347,6 +351,8 @@ proxy.socks.port=
 # Example of usage (replace 'http' with 'https' or 'socks' as needed)
 #proxy.http.host=proxy.example.com
 #proxy.http.port=8080
+# Whether to use the system proxy by default
+proxy.system=true
 
 # PDE X
 pdex.autoSave.autoSaveByDefault=true

@@ -2,6 +2,7 @@ package processing.mode.java.pdex;
 
 import com.google.classpath.ClassPath;
 
+import org.eclipse.jdt.core.compiler.IProblem;
 import org.eclipse.jdt.core.dom.ASTNode;
 import org.eclipse.jdt.core.dom.CompilationUnit;
 
@@ -25,10 +26,11 @@ public class PreprocessedSketch {
   public final ClassPath classPath;
   public final URLClassLoader classLoader;
 
-  public final ClassPath searchClassPath;
+  public final String[] searchClassPathArray;
 
   public final int[] tabStartOffsets;
 
+  public final String scrubbedPdeCode;
   public final String pdeCode;
   public final String javaCode;
 
@@ -75,9 +77,23 @@ public class PreprocessedSketch {
   }
 
 
+  public String getPdeCode(SketchInterval si) {
+    if (si == SketchInterval.BEFORE_START) return "";
+    int stop = Math.min(si.stopPdeOffset, pdeCode.length());
+    int start = Math.min(si.startPdeOffset, stop);
+    return pdeCode.substring(start, stop);
+  }
+
+
   public SketchInterval mapJavaToSketch(ASTNode node) {
     return mapJavaToSketch(node.getStartPosition(),
                            node.getStartPosition() + node.getLength());
+  }
+
+
+  public SketchInterval mapJavaToSketch(IProblem iproblem) {
+    return mapJavaToSketch(iproblem.getSourceStart(),
+                           iproblem.getSourceEnd() + 1); // make it exclusive
   }
 
 
@@ -117,7 +133,7 @@ public class PreprocessedSketch {
   }
 
 
-  private int pdeOffsetToTabIndex(int pdeOffset) {
+  public int pdeOffsetToTabIndex(int pdeOffset) {
     pdeOffset = Math.max(0, pdeOffset);
     int tab = Arrays.binarySearch(tabStartOffsets, pdeOffset);
     if (tab < 0) {
@@ -127,7 +143,7 @@ public class PreprocessedSketch {
   }
 
 
-  private int pdeOffsetToTabOffset(int tabIndex, int pdeOffset) {
+  public int pdeOffsetToTabOffset(int tabIndex, int pdeOffset) {
     int tabStartOffset = tabStartOffsets[clipTabIndex(tabIndex)];
     return pdeOffset - tabStartOffset;
   }
@@ -203,10 +219,11 @@ public class PreprocessedSketch {
     public ClassPath classPath;
     public URLClassLoader classLoader;
 
-    public ClassPath searchClassPath;
+    public String[] searchClassPathArray;
 
     public int[] tabStartOffsets = new int[0];
 
+    public String scrubbedPdeCode;
     public String pdeCode;
     public String javaCode;
 
@@ -237,10 +254,11 @@ public class PreprocessedSketch {
     classPath = b.classPath;
     classLoader = b.classLoader;
 
-    searchClassPath = b.searchClassPath;
+    searchClassPathArray = b.searchClassPathArray;
 
     tabStartOffsets = b.tabStartOffsets;
 
+    scrubbedPdeCode = b.scrubbedPdeCode;
     pdeCode = b.pdeCode;
     javaCode = b.javaCode;
 

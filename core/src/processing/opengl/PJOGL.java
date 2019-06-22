@@ -503,6 +503,7 @@ public class PJOGL extends PGL {
     return ((Font) font).deriveFont(size);
   }
 
+
   @Override
   protected int getGLSLVersion() {
     VersionNumber vn = context.getGLSLVersionNumber();
@@ -511,48 +512,59 @@ public class PJOGL extends PGL {
 
 
   @Override
+  protected String getGLSLVersionSuffix() {
+    VersionNumber vn = context.getGLSLVersionNumber();
+    if (context.isGLESProfile() && 1 < vn.getMajor()) {
+      return " es";
+    } else {
+      return "";
+    }
+  }
+
+
+  @Override
   protected String[] loadVertexShader(String filename) {
-    return loadVertexShader(filename, getGLSLVersion());
+    return loadVertexShader(filename, getGLSLVersion(), getGLSLVersionSuffix());
   }
 
 
   @Override
   protected String[] loadFragmentShader(String filename) {
-    return loadFragmentShader(filename, getGLSLVersion());
+    return loadFragmentShader(filename, getGLSLVersion(), getGLSLVersionSuffix());
   }
 
 
   @Override
   protected String[] loadVertexShader(URL url) {
-    return loadVertexShader(url, getGLSLVersion());
+    return loadVertexShader(url, getGLSLVersion(), getGLSLVersionSuffix());
   }
 
 
   @Override
   protected String[] loadFragmentShader(URL url) {
-    return loadFragmentShader(url, getGLSLVersion());
+    return loadFragmentShader(url, getGLSLVersion(), getGLSLVersionSuffix());
   }
 
 
   @Override
-  protected String[] loadFragmentShader(String filename, int version) {
+  protected String[] loadFragmentShader(String filename, int version, String versionSuffix) {
     String[] fragSrc0 = sketch.loadStrings(filename);
-    return preprocessFragmentSource(fragSrc0, version);
+    return preprocessFragmentSource(fragSrc0, version, versionSuffix);
   }
 
 
   @Override
-  protected String[] loadVertexShader(String filename, int version) {
+  protected String[] loadVertexShader(String filename, int version, String versionSuffix) {
     String[] vertSrc0 = sketch.loadStrings(filename);
-    return preprocessVertexSource(vertSrc0, version);
+    return preprocessVertexSource(vertSrc0, version, versionSuffix);
   }
 
 
   @Override
-  protected String[] loadFragmentShader(URL url, int version) {
+  protected String[] loadFragmentShader(URL url, int version, String versionSuffix) {
     try {
       String[] fragSrc0 = PApplet.loadStrings(url.openStream());
-      return preprocessFragmentSource(fragSrc0, version);
+      return preprocessFragmentSource(fragSrc0, version, versionSuffix);
     } catch (IOException e) {
       PGraphics.showException("Cannot load fragment shader " + url.getFile());
     }
@@ -561,10 +573,10 @@ public class PJOGL extends PGL {
 
 
   @Override
-  protected String[] loadVertexShader(URL url, int version) {
+  protected String[] loadVertexShader(URL url, int version, String versionSuffix) {
     try {
       String[] vertSrc0 = PApplet.loadStrings(url.openStream());
-      return preprocessVertexSource(vertSrc0, version);
+      return preprocessVertexSource(vertSrc0, version, versionSuffix);
     } catch (IOException e) {
       PGraphics.showException("Cannot load vertex shader " + url.getFile());
     }
@@ -601,18 +613,32 @@ public class PJOGL extends PGL {
     }
 
     @Override
+    public void setCallback(int flag) {
+      GLU.gluTessCallback(tess, flag, gluCallback);
+    }
+
+    @Override
+    public void setWindingRule(int rule) {
+      setProperty(GLU.GLU_TESS_WINDING_RULE, rule);
+    }
+
+    public void setProperty(int property, int value) {
+      GLU.gluTessProperty(tess, property, value);
+    }
+
+    @Override
     public void beginPolygon() {
-      GLU.gluTessBeginPolygon(tess, null);
+      beginPolygon(null);
+    }
+
+    @Override
+    public void beginPolygon(Object data) {
+      GLU.gluTessBeginPolygon(tess, data);
     }
 
     @Override
     public void endPolygon() {
       GLU.gluTessEndPolygon(tess);
-    }
-
-    @Override
-    public void setWindingRule(int rule) {
-      GLU.gluTessProperty(tess, GLU.GLU_TESS_WINDING_RULE, rule);
     }
 
     @Override
@@ -627,7 +653,12 @@ public class PJOGL extends PGL {
 
     @Override
     public void addVertex(double[] v) {
-      GLU.gluTessVertex(tess, v, 0, v);
+      addVertex(v, 0, v);
+    }
+
+    @Override
+    public void addVertex(double[] v, int n, Object data) {
+      GLU.gluTessVertex(tess, v, n, data);
     }
 
     protected class GLUCallback extends GLUtessellatorCallbackAdapter {
@@ -752,6 +783,7 @@ public class PJOGL extends PGL {
 
     TESS_WINDING_NONZERO = GLU.GLU_TESS_WINDING_NONZERO;
     TESS_WINDING_ODD     = GLU.GLU_TESS_WINDING_ODD;
+    TESS_EDGE_FLAG       = GLU.GLU_TESS_EDGE_FLAG;
 
     GENERATE_MIPMAP_HINT = GL.GL_GENERATE_MIPMAP_HINT;
     FASTEST              = GL.GL_FASTEST;
@@ -976,6 +1008,7 @@ public class PJOGL extends PGL {
     DEPTH_STENCIL = GL.GL_DEPTH_STENCIL;
 
     FRAMEBUFFER_COMPLETE                      = GL.GL_FRAMEBUFFER_COMPLETE;
+    FRAMEBUFFER_UNDEFINED                     = GL2ES3.GL_FRAMEBUFFER_UNDEFINED;
     FRAMEBUFFER_INCOMPLETE_ATTACHMENT         = GL.GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
     FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT = GL.GL_FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
     FRAMEBUFFER_INCOMPLETE_DIMENSIONS         = GL.GL_FRAMEBUFFER_INCOMPLETE_DIMENSIONS;
@@ -983,6 +1016,8 @@ public class PJOGL extends PGL {
     FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER        = GL2GL3.GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER;
     FRAMEBUFFER_INCOMPLETE_READ_BUFFER        = GL2GL3.GL_FRAMEBUFFER_INCOMPLETE_READ_BUFFER;
     FRAMEBUFFER_UNSUPPORTED                   = GL.GL_FRAMEBUFFER_UNSUPPORTED;
+    FRAMEBUFFER_INCOMPLETE_MULTISAMPLE        = GL.GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE;
+    FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS      = GL3ES3.GL_FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS;
 
     FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE           = GL.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE;
     FRAMEBUFFER_ATTACHMENT_OBJECT_NAME           = GL.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME;
@@ -1701,7 +1736,7 @@ public class PJOGL extends PGL {
   @Override
   public String getProgramInfoLog(int program) {
     int[] val = { 0 };
-    gl2.glGetShaderiv(program, GL2ES2.GL_INFO_LOG_LENGTH, val, 0);
+    gl2.glGetProgramiv(program, GL2ES2.GL_INFO_LOG_LENGTH, val, 0);
     int length = val[0];
 
     if (0 < length) {
@@ -1903,6 +1938,8 @@ public class PJOGL extends PGL {
       gl2x.glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
     } else if (gl3 != null) {
       gl3.glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
+    } else if (gl3es3 != null) {
+      gl3es3.glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter);
     } else {
       throw new RuntimeException(String.format(MISSING_GLFUNC_ERROR, "glBlitFramebuffer()"));
     }
@@ -1914,6 +1951,8 @@ public class PJOGL extends PGL {
       gl2x.glRenderbufferStorageMultisample(target, samples, format, width, height);
     } else if (gl3 != null) {
       gl3.glRenderbufferStorageMultisample(target, samples, format, width, height);
+    } else if (gl3es3 != null) {
+      gl3es3.glRenderbufferStorageMultisample(target, samples, format, width, height);
     } else {
       throw new RuntimeException(String.format(MISSING_GLFUNC_ERROR, "glRenderbufferStorageMultisample()"));
     }
@@ -1925,6 +1964,8 @@ public class PJOGL extends PGL {
       gl2x.glReadBuffer(buf);
     } else if (gl3 != null) {
       gl3.glReadBuffer(buf);
+    } else if (gl3es3 != null) {
+      gl3es3.glReadBuffer(buf);
     } else {
       throw new RuntimeException(String.format(MISSING_GLFUNC_ERROR, "glReadBuffer()"));
     }
@@ -1936,6 +1977,11 @@ public class PJOGL extends PGL {
       gl2x.glDrawBuffer(buf);
     } else if (gl3 != null) {
       gl3.glDrawBuffer(buf);
+    } else if (gl3es3 != null) {
+      IntBuffer intBuffer = IntBuffer.allocate(1);
+      intBuffer.put(buf);
+      intBuffer.rewind();
+      gl3es3.glDrawBuffers(1, intBuffer);
     } else {
       throw new RuntimeException(String.format(MISSING_GLFUNC_ERROR, "glDrawBuffer()"));
     }

@@ -1,5 +1,7 @@
 package processing.data;
 
+import java.io.File;
+import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Random;
@@ -514,8 +516,8 @@ public class StringList implements Iterable<String> {
       }
 
       @Override
-      public float compare(int a, int b) {
-        float diff = data[a].compareToIgnoreCase(data[b]);
+      public int compare(int a, int b) {
+        int diff = data[a].compareToIgnoreCase(data[b]);
         return reverse ? -diff : diff;
       }
 
@@ -750,23 +752,47 @@ public class StringList implements Iterable<String> {
 
 
   public void print() {
-    for (int i = 0; i < size(); i++) {
+    for (int i = 0; i < count; i++) {
       System.out.format("[%d] %s%n", i, data[i]);
     }
   }
 
 
+  /**
+   * Save tab-delimited entries to a file (TSV format, UTF-8 encoding)
+   */
+  public void save(File file) {
+    PrintWriter writer = PApplet.createWriter(file);
+    write(writer);
+    writer.close();
+  }
+
+
+  /**
+   * Write entries to a PrintWriter, one per line
+   */
+  public void write(PrintWriter writer) {
+    for (int i = 0; i < count; i++) {
+      writer.println(data[i]);
+    }
+    writer.flush();
+  }
+
+
+  /**
+   * Return this dictionary as a String in JSON format.
+   */
+  public String toJSON() {
+    StringList temp = new StringList();
+    for (String item : this) {
+      temp.append(JSONObject.quote(item));
+    }
+    return "[ " + temp.join(", ") + " ]";
+  }
+
+
   @Override
   public String toString() {
-    StringBuilder sb = new StringBuilder();
-    sb.append(getClass().getSimpleName() + " size=" + size() + " [ ");
-    for (int i = 0; i < size(); i++) {
-      if (i != 0) {
-        sb.append(", ");
-      }
-      sb.append(i + ": \"" + data[i] + "\"");
-    }
-    sb.append(" ]");
-    return sb.toString();
+    return getClass().getSimpleName() + " size=" + size() + " " + toJSON();
   }
 }

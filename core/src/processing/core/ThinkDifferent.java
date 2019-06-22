@@ -60,7 +60,8 @@ public class ThinkDifferent {
     application.setQuitHandler(new QuitHandler() {
       public void handleQuitRequestWith(QuitEvent event, QuitResponse response) {
         sketch.exit();
-        if (!attemptedQuit) {
+        if (PApplet.uncaughtThrowable == null &&  // no known crash
+            !attemptedQuit) {  // haven't tried yet
           response.cancelQuit();  // tell OS X we'll handle this
           attemptedQuit = true;
         } else {
@@ -70,6 +71,12 @@ public class ThinkDifferent {
     });
   }
 
+  static public void cleanup() {
+    if (application == null) {
+      application = Application.getApplication();
+    }
+    application.setQuitHandler(null);
+  }
 
   // Called via reflection from PSurfaceAWT and others
   static public void setIconImage(Image image) {

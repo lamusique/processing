@@ -41,14 +41,14 @@ import processing.core.PConstants;
 public class Platform {
   static DefaultPlatform inst;
 
-  static Map<Integer, String> platformNames = new HashMap<Integer, String>();
+  static Map<Integer, String> platformNames = new HashMap<>();
   static {
     platformNames.put(PConstants.WINDOWS, "windows"); //$NON-NLS-1$
     platformNames.put(PConstants.MACOSX, "macosx"); //$NON-NLS-1$
     platformNames.put(PConstants.LINUX, "linux"); //$NON-NLS-1$
   }
 
-  static Map<String, Integer> platformIndices = new HashMap<String, Integer>();
+  static Map<String, Integer> platformIndices = new HashMap<>();
   static {
     platformIndices.put("windows", PConstants.WINDOWS); //$NON-NLS-1$
     platformIndices.put("macosx", PConstants.MACOSX); //$NON-NLS-1$
@@ -86,7 +86,7 @@ public class Platform {
       } else if (Platform.isLinux()) {
         platformClass = Class.forName("processing.app.platform.LinuxPlatform"); //$NON-NLS-1$
       }
-      inst = (DefaultPlatform) platformClass.newInstance();
+      inst = (DefaultPlatform) platformClass.getDeclaredConstructor().newInstance();
     } catch (Exception e) {
       Messages.showError("Problem Setting the Platform",
                          "An unknown error occurred while trying to load\n" +
@@ -150,7 +150,7 @@ public class Platform {
 
     } catch (Exception e) {
       Messages.showWarning("Problem Opening URL",
-                       "Could not open the URL\n" + url, e);
+                           "Could not open the URL\n" + url, e);
     }
   }
 
@@ -195,6 +195,7 @@ public class Platform {
    * Return the value of the os.arch property
    */
   static public String getNativeArch() {
+    // This will return "arm" for 32-bit ARM, "aarch64" for 64-bit ARM (both on Linux)
     return System.getProperty("os.arch");
   }
 
@@ -211,8 +212,12 @@ public class Platform {
   static public String getVariant(int platform, String arch, int bits) {
     if (platform == PConstants.LINUX &&
         bits == 32 && "arm".equals(Platform.getNativeArch())) {
-      return "armv6hf";  // assume armv6hf for now
+      return "armv6hf";  // assume armv6hf
+    } else if (platform == PConstants.LINUX &&
+        bits == 64 && "aarch64".equals(Platform.getNativeArch())) {
+      return "arm64";
     }
+
     return Integer.toString(bits);  // 32 or 64
   }
 
@@ -398,5 +403,13 @@ public class Platform {
 
   static public int unsetenv(String variable) {
     return inst.unsetenv(variable);
+  }
+
+
+  // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+
+  static public int getSystemDPI() {
+    return inst.getSystemDPI();
   }
 }

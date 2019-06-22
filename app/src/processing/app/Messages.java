@@ -156,7 +156,7 @@ public class Messages {
    * Testing a new warning window that includes the stack trace.
    */
   static public void showTrace(String title, String message,
-                                       Throwable t, boolean fatal) {
+                               Throwable t, boolean fatal) {
     if (title == null) title = fatal ? "Error" : "Warning";
 
     if (Base.isCommandLine()) {
@@ -266,6 +266,34 @@ public class Messages {
                                            JOptionPane.YES_NO_OPTION,
                                            JOptionPane.QUESTION_MESSAGE);
     } else {
+      int result = showCustomQuestion(editor, title, primary, secondary,
+          0, "Yes", "No");
+      if (result == 0) {
+        return JOptionPane.YES_OPTION;
+      } else if (result == 1) {
+        return JOptionPane.NO_OPTION;
+      } else {
+        return JOptionPane.CLOSED_OPTION;
+      }
+    }
+  }
+
+
+  /**
+   * @param highlight A valid array index for options[] that specifies the
+   *                  default (i.e. safe) choice.
+   * @return The (zero-based) index of the selected value, -1 otherwise.
+   */
+  static public int showCustomQuestion(Frame editor, String title,
+                                       String primary, String secondary,
+                                       int highlight, String... options) {
+    Object result;
+    if (!Platform.isMacOS()) {
+      return JOptionPane.showOptionDialog(editor,
+          "<html><body><b>" + primary + "</b><br>" + secondary, title,
+          JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
+          options, options[highlight]);
+    } else {
       // Pane formatting adapted from the Quaqua guide
       // http://www.randelshofer.ch/quaqua/guide/joptionpane.html
       JOptionPane pane =
@@ -275,29 +303,23 @@ public class Messages {
                         "p { font: 11pt \"Lucida Grande\"; margin-top: 8px; width: 300px }"+
                         "</style> </head>" +
                         "<b>" + primary + "</b>" +
-                        "<p>" + secondary + "</p>",
+                        "<p>" + secondary, // + "</p>",
                         JOptionPane.QUESTION_MESSAGE);
 
-      String[] options = new String[] {
-        "Yes", "No"
-      };
       pane.setOptions(options);
 
       // highlight the safest option ala apple hig
-      pane.setInitialValue(options[0]);
+      pane.setInitialValue(options[highlight]);
 
       JDialog dialog = pane.createDialog(editor, null);
       dialog.setVisible(true);
 
-      Object result = pane.getValue();
-      if (result == options[0]) {
-        return JOptionPane.YES_OPTION;
-      } else if (result == options[1]) {
-        return JOptionPane.NO_OPTION;
-      } else {
-        return JOptionPane.CLOSED_OPTION;
-      }
+      result = pane.getValue();
     }
+    for (int i = 0; i < options.length; i++) {
+      if (result != null && result.equals(options[i])) return i;
+    }
+    return -1;
   }
 
 
@@ -327,7 +349,9 @@ public class Messages {
 
   static public void loge(String message, Throwable e) {
     if (Base.DEBUG) {
-      System.err.println(message);
+      if (message != null) {
+        System.err.println(message);
+      }
       e.printStackTrace();
     }
   }
@@ -335,7 +359,7 @@ public class Messages {
 
   static public void loge(String message) {
     if (Base.DEBUG) {
-      System.out.println(message);
+      System.err.println(message);
     }
   }
 }

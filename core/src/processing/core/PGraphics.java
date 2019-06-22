@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2013-15 The Processing Foundation
+  Copyright (c) 2013-19 The Processing Foundation
   Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
@@ -227,7 +227,7 @@ public class PGraphics extends PImage implements PConstants {
    * images go out of scope, they will be properly garbage collected.
    */
   protected WeakHashMap<PImage, Object> cacheMap =
-    new WeakHashMap<PImage, Object>();
+    new WeakHashMap<>();
 
 
   ////////////////////////////////////////////////////////////
@@ -334,8 +334,11 @@ public class PGraphics extends PImage implements PConstants {
   /** True if colors are not in the range 0..1 */
   boolean colorModeScale; // = true;
 
-  /** True if colorMode(RGB, 255) */
-  boolean colorModeDefault; // = true;
+  /**
+   * True if colorMode(RGB, 255). Defaults to true so that color()
+   * used as part of a field declaration will properly assign values.
+   */
+  boolean colorModeDefault = true;
 
   // ........................................................
 
@@ -2013,6 +2016,7 @@ public class PGraphics extends PImage implements PConstants {
     showMissingWarning("clip");
   }
 
+
   /**
    * ( begin auto-generated from noClip.xml )
    *
@@ -2266,9 +2270,9 @@ public class PGraphics extends PImage implements PConstants {
   */
   public void curveVertex(float x, float y) {
     curveVertexCheck();
-    float[] vertex = curveVertices[curveVertexCount];
-    vertex[X] = x;
-    vertex[Y] = y;
+    float[] v = curveVertices[curveVertexCount];
+    v[X] = x;
+    v[Y] = y;
     curveVertexCount++;
 
     // draw a segment if there are enough points
@@ -2289,10 +2293,10 @@ public class PGraphics extends PImage implements PConstants {
    */
   public void curveVertex(float x, float y, float z) {
     curveVertexCheck();
-    float[] vertex = curveVertices[curveVertexCount];
-    vertex[X] = x;
-    vertex[Y] = y;
-    vertex[Z] = z;
+    float[] v = curveVertices[curveVertexCount];
+    v[X] = x;
+    v[Y] = y;
+    v[Z] = z;
     curveVertexCount++;
 
     // draw a segment if there are enough points
@@ -2408,6 +2412,7 @@ public class PGraphics extends PImage implements PConstants {
    * @webref shape:2d_primitives
    * @param x x-coordinate of the point
    * @param y y-coordinate of the point
+   * @see PGraphics#stroke(int)
    */
   public void point(float x, float y) {
     beginShape(POINTS);
@@ -2724,6 +2729,29 @@ public class PGraphics extends PImage implements PConstants {
     endShape(CLOSE);
   }
 
+  /**
+   * ( begin auto-generated from square.xml )
+   *
+   * Draws a square to the screen. A square is a four-sided shape with 
+   * every angle at ninety degrees and each side is the same length. 
+   * By default, the first two parameters set the location of the 
+   * upper-left corner, the third sets the width and height. The way 
+   * these parameters are interpreted, however, may be changed with the 
+   * <b>rectMode()</b> function.
+   *
+   * ( end auto-generated )
+   *
+   * @webref shape:2d_primitives
+   * @param x x-coordinate of the rectangle by default
+   * @param y y-coordinate of the rectangle by default
+   * @param extent width and height of the rectangle by default
+   * @see PGraphics#rect(float, float, float, float)
+   * @see PGraphics#rectMode(int)
+   */
+  public void square(float x, float y, float extent) {
+    rect(x, y, extent, extent);
+  }
+
 
 
   //////////////////////////////////////////////////////////////
@@ -2898,6 +2926,26 @@ public class PGraphics extends PImage implements PConstants {
   protected void arcImpl(float x, float y, float w, float h,
                          float start, float stop, int mode) {
     showMissingWarning("arc");
+  }
+
+  /**
+   * ( begin auto-generated from circle.xml )
+   *
+   * Draws a circle to the screen. By default, the first two parameters 
+   * set the location of the center, and the third sets the shape's width 
+   * and height. The origin may be changed with the <b>ellipseMode()</b> 
+   * function.
+   *
+   * ( end auto-generated )
+   * @webref shape:2d_primitives
+   * @param x x-coordinate of the ellipse
+   * @param y y-coordinate of the ellipse
+   * @param extent width and height of the ellipse by default
+   * @see PApplet#ellipse(float, float, float, float)
+   * @see PApplet#ellipseMode(int)
+   */
+  public void circle(float x, float y, float extent) {
+    ellipse(x, y, extent, extent);
   }
 
 
@@ -3212,10 +3260,8 @@ public class PGraphics extends PImage implements PConstants {
    */
   public float bezierPoint(float a, float b, float c, float d, float t) {
     float t1 = 1.0f - t;
-    return a*t1*t1*t1 + 3*b*t*t1*t1 + 3*c*t*t*t1 + d*t*t*t;
+    return (a*t1 + 3*b*t)*t1*t1 + (3*c*t1 + d*t)*t*t;
   }
-
-
   /**
    * ( begin auto-generated from bezierTangent.xml )
    *
@@ -3753,8 +3799,8 @@ public class PGraphics extends PImage implements PConstants {
    *
    * @webref image:loading_displaying
    * @param img the image to display
-   * @param a x-coordinate of the image
-   * @param b y-coordinate of the image
+   * @param a x-coordinate of the image by default
+   * @param b y-coordinate of the image by default
    * @see PApplet#loadImage(String, String)
    * @see PImage
    * @see PGraphics#imageMode(int)
@@ -3782,8 +3828,8 @@ public class PGraphics extends PImage implements PConstants {
   }
 
   /**
-   * @param c width to display the image
-   * @param d height to display the image
+   * @param c width to display the image by default
+   * @param d height to display the image by default
    */
   public void image(PImage img, float a, float b, float c, float d) {
     image(img, a, b, c, d, 0, 0, img.width, img.height);
@@ -3878,6 +3924,11 @@ public class PGraphics extends PImage implements PConstants {
 //      fillA = 1;
 //    }
 
+    u1 *= img.pixelDensity;
+    u2 *= img.pixelDensity;
+    v1 *= img.pixelDensity;
+    v2 *= img.pixelDensity;
+
     beginShape(QUADS);
     texture(img);
     vertex(x1, y1, u1, v1);
@@ -3895,6 +3946,7 @@ public class PGraphics extends PImage implements PConstants {
 //    fillB = savedFillB;
 //    fillA = savedFillA;
   }
+
 
 
   //////////////////////////////////////////////////////////////
@@ -3948,7 +4000,6 @@ public class PGraphics extends PImage implements PConstants {
       }
     }
   }
-
 
 
   /**
@@ -4048,13 +4099,23 @@ public class PGraphics extends PImage implements PConstants {
   }
 
 
+
   //////////////////////////////////////////////////////////////
 
   // TEXT/FONTS
 
 
+  /**
+   * Used by PGraphics to remove the requirement for loading a font.
+   */
+  protected PFont createDefaultFont(float size) {
+    Font baseFont = new Font("Lucida Sans", Font.PLAIN, 1);
+    return createFont(baseFont, size, true, null, false);
+  }
+
+
   protected PFont createFont(String name, float size,
-                          boolean smooth, char[] charset) {
+                             boolean smooth, char[] charset) {
     String lowerName = name.toLowerCase();
     Font baseFont = null;
 
@@ -4064,9 +4125,9 @@ public class PGraphics extends PImage implements PConstants {
         stream = parent.createInput(name);
         if (stream == null) {
           System.err.println("The font \"" + name + "\" " +
-                                 "is missing or inaccessible, make sure " +
-                                 "the URL is valid or that the file has been " +
-                                 "added to your sketch and is readable.");
+                             "is missing or inaccessible, make sure " +
+                             "the URL is valid or that the file has been " +
+                             "added to your sketch and is readable.");
           return null;
         }
         baseFont = Font.createFont(Font.TRUETYPE_FONT, parent.createInput(name));
@@ -4074,15 +4135,21 @@ public class PGraphics extends PImage implements PConstants {
       } else {
         baseFont = PFont.findFont(name);
       }
-      return new PFont(baseFont.deriveFont(size * parent.pixelDensity),
-                       smooth, charset, stream != null,
-                       parent.pixelDensity);
+      return createFont(baseFont, size, smooth, charset, stream != null);
 
     } catch (Exception e) {
       System.err.println("Problem with createFont(\"" + name + "\")");
       e.printStackTrace();
       return null;
     }
+  }
+
+
+  private PFont createFont(Font baseFont, float size,
+                           boolean smooth, char[] charset, boolean stream) {
+    return new PFont(baseFont.deriveFont(size * parent.pixelDensity),
+                     smooth, charset, stream,
+                     parent.pixelDensity);
   }
 
 
@@ -4911,16 +4978,6 @@ public class PGraphics extends PImage implements PConstants {
   }
 
 
-//  public void text(String s, float a, float b, float c, float d, float z) {
-//    if (z != 0) translate(0, 0, z);  // slowness, badness
-//
-//    text(s, a, b, c, d);
-//    textZ = z;
-//
-//    if (z != 0) translate(0, 0, -z);  // TEMPORARY HACK! SLOW!
-//  }
-
-
   public void text(int num, float x, float y) {
     text(String.valueOf(num), x, y);
   }
@@ -5102,27 +5159,84 @@ public class PGraphics extends PImage implements PConstants {
   */
 
 
-//  /**
-//   * Convenience method to get a legit FontMetrics object. Where possible,
-//   * override this any renderer subclass so that you're not using what's
-//   * returned by getDefaultToolkit() to get your metrics.
-//   */
-//  @SuppressWarnings("deprecation")
-//  public FontMetrics getFontMetrics(Font font) {  // ignore
-//    Frame frame = parent.frame;
-//    if (frame != null) {
-//      return frame.getToolkit().getFontMetrics(font);
-//    }
-//    return Toolkit.getDefaultToolkit().getFontMetrics(font);
-//  }
-//
-//
-//  /**
-//   * Convenience method to jump through some Java2D hoops and get an FRC.
-//   */
-//  public FontRenderContext getFontRenderContext(Font font) {  // ignore
-//    return getFontMetrics(font).getFontRenderContext();
-//  }
+
+  //////////////////////////////////////////////////////////////
+
+  // PARITY WITH P5.JS
+
+  /**
+   * ( begin auto-generated from push.xml )
+   *
+   * The <b>push()</b> function saves the current drawing style 
+   * settings and transformations, while <b>pop()</b> restores these 
+   * settings. Note that these functions are always used together. 
+   * They allow you to change the style and transformation settings 
+   * and later return to what you had. When a new state is started 
+   * with push(), it builds on the current style and transform 
+   * information.<br />
+   * <br />
+   * <b>push()</b> stores information related to the current 
+   * transformation state and style settings controlled by the 
+   * following functions: <b>rotate()</b>, <b>translate()</b>, 
+   * <b>scale()</b>, <b>fill()</b>, <b>stroke()</b>, <b>tint()</b>, 
+   * <b>strokeWeight()</b>, <b>strokeCap()</b>, <b>strokeJoin()</b>, 
+   * <b>imageMode()</b>, <b>rectMode()</b>, <b>ellipseMode()</b>, 
+   * <b>colorMode()</b>, <b>textAlign()</b>, <b>textFont()</b>, 
+   * <b>textMode()</b>, <b>textSize()</b>, <b>textLeading()</b>.<br />
+   * <br />
+   * The <b>push()</b> and <b>pop()</b> functions were added with 
+   * Processing 3.5. They can be used in place of <b>pushMatrix()</b>, 
+   * <b>popMatrix()</b>, <b>pushStyles()</b>, and <b>popStyles()</b>. 
+   * The difference is that push() and pop() control both the 
+   * transformations (rotate, scale, translate) and the drawing styles 
+   * at the same time.
+   *
+   * ( end auto-generated )
+   *
+   * @webref structure
+   * @see PGraphics#pop()
+   */
+  public void push() {
+    pushStyle();
+    pushMatrix();
+  }
+
+  /**
+   * ( begin auto-generated from pop.xml )
+   *
+   * The <b>pop()</b> function restores the previous drawing style 
+   * settings and transformations after <b>push()</b> has changed them. 
+   * Note that these functions are always used together. They allow 
+   * you to change the style and transformation settings and later 
+   * return to what you had. When a new state is started with push(), 
+   * it builds on the current style and transform information.<br />
+   * <br />
+   * <br />
+   * <b>push()</b> stores information related to the current 
+   * transformation state and style settings controlled by the 
+   * following functions: <b>rotate()</b>, <b>translate()</b>, 
+   * <b>scale()</b>, <b>fill()</b>, <b>stroke()</b>, <b>tint()</b>, 
+   * <b>strokeWeight()</b>, <b>strokeCap()</b>, <b>strokeJoin()</b>, 
+   * <b>imageMode()</b>, <b>rectMode()</b>, <b>ellipseMode()</b>, 
+   * <b>colorMode()</b>, <b>textAlign()</b>, <b>textFont()</b>, 
+   * <b>textMode()</b>, <b>textSize()</b>, <b>textLeading()</b>.<br />
+   * <br />
+   * The <b>push()</b> and <b>pop()</b> functions were added with 
+   * Processing 3.5. They can be used in place of <b>pushMatrix()</b>, 
+   * <b>popMatrix()</b>, <b>pushStyles()</b>, and <b>popStyles()</b>. 
+   * The difference is that push() and pop() control both the 
+   * transformations (rotate, scale, translate) and the drawing styles 
+   * at the same time.
+   *
+   * ( end auto-generated )
+   *
+   * @webref structure
+   * @see PGraphics#push()
+   */
+  public void pop() {
+    popStyle();
+    popMatrix();
+  }
 
 
 
@@ -6162,7 +6276,9 @@ public class PGraphics extends PImage implements PConstants {
     ellipseMode(s.ellipseMode);
     shapeMode(s.shapeMode);
 
-    blendMode(s.blendMode);
+    if (blendMode != s.blendMode) {
+      blendMode(s.blendMode);
+    }
 
     if (s.tint) {
       tint(s.tintColor);
@@ -7346,7 +7462,7 @@ public class PGraphics extends PImage implements PConstants {
    * @param image PImage to set as background (must be same size as the sketch window)
    */
   public void background(PImage image) {
-    if ((image.width != width) || (image.height != height)) {
+    if ((image.pixelWidth != pixelWidth) || (image.pixelHeight != pixelHeight)) {
       throw new RuntimeException(ERROR_BACKGROUND_IMAGE_SIZE);
     }
     if ((image.format != RGB) && (image.format != ARGB)) {
@@ -7377,6 +7493,7 @@ public class PGraphics extends PImage implements PConstants {
     pushStyle();
     pushMatrix();
     resetMatrix();
+    noStroke();
     fill(backgroundColor);
     rect(0, 0, width, height);
     popMatrix();
@@ -8121,7 +8238,7 @@ public class PGraphics extends PImage implements PConstants {
    */
   static public void showWarning(String msg) {  // ignore
     if (warnings == null) {
-      warnings = new HashMap<String, Object>();
+      warnings = new HashMap<>();
     }
     if (!warnings.containsKey(msg)) {
       System.err.println(msg);
@@ -8215,7 +8332,7 @@ public class PGraphics extends PImage implements PConstants {
    */
   protected void defaultFontOrDeath(String method, float size) {
     if (parent != null) {
-      textFont = parent.createDefaultFont(size);
+      textFont = createDefaultFont(size);
     } else {
       throw new RuntimeException("Use textFont() before " + method + "()");
     }
@@ -8364,12 +8481,10 @@ public class PGraphics extends PImage implements PConstants {
           targetsCreated++;
         } else {
           target = targetPool.take();
-          if (target.width != requestedWidth ||
-              target.height != requestedHeight) {
-            target.width = requestedWidth;
-            target.height = requestedHeight;
+          if (target.pixelWidth != requestedWidth ||
+              target.pixelHeight != requestedHeight) {
             // TODO: this kills performance when saving different sizes
-            target.pixels = new int[requestedWidth * requestedHeight];
+            target = new PImage(requestedWidth, requestedHeight);
           }
         }
         target.format = format;

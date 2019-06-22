@@ -272,6 +272,13 @@ public abstract class PGL {
   protected boolean clearColor = false;
   protected boolean pclearColor;
 
+  protected boolean clearDepth = false;
+  protected boolean pclearDepth;
+
+  protected boolean clearStencil = false;
+  protected boolean pclearStencil;
+
+
   // ........................................................
 
   // Error messages
@@ -636,13 +643,49 @@ public abstract class PGL {
   // Frame rendering
 
 
-  protected void clearBackground(float r, float g, float b, float a, boolean depth) {
-    if (depth) {
+  protected void clearDepthStencil() {
+    if (!pclearDepth && !pclearStencil) {
+      depthMask(true);
       clearDepth(1);
-      clear(PGL.DEPTH_BUFFER_BIT);
+      clearStencil(0);
+      clear(DEPTH_BUFFER_BIT | STENCIL_BUFFER_BIT);
+    } else if (!pclearDepth) {
+      depthMask(true);
+      clearDepth(1);
+      clear(DEPTH_BUFFER_BIT);
+    } else if (!pclearStencil) {
+      clearStencil(0);
+      clear(STENCIL_BUFFER_BIT);
     }
+  }
+
+
+  protected void clearBackground(float r, float g, float b, float a,
+                                 boolean depth, boolean stencil) {
     clearColor(r, g, b, a);
-    clear(PGL.COLOR_BUFFER_BIT);
+    if (depth && stencil) {
+      clearDepth(1);
+      clearStencil(0);
+      clear(DEPTH_BUFFER_BIT | STENCIL_BUFFER_BIT | COLOR_BUFFER_BIT);
+      if (0 < sketch.frameCount) {
+        clearDepth = true;
+        clearStencil = true;
+      }
+    } else if (depth) {
+      clearDepth(1);
+      clear(DEPTH_BUFFER_BIT | COLOR_BUFFER_BIT);
+      if (0 < sketch.frameCount) {
+        clearDepth = true;
+      }
+    } else if (stencil) {
+      clearStencil(0);
+      clear(STENCIL_BUFFER_BIT | COLOR_BUFFER_BIT);
+      if (0 < sketch.frameCount) {
+        clearStencil = true;
+      }
+    } else {
+      clear(PGL.COLOR_BUFFER_BIT);
+    }
     if (0 < sketch.frameCount) {
       clearColor = true;
     }
@@ -659,6 +702,12 @@ public abstract class PGL {
 
     pclearColor = clearColor;
     clearColor = false;
+
+    pclearDepth = clearDepth;
+    clearDepth = false;
+
+    pclearStencil = clearStencil;
+    clearStencil = false;
 
     if (SINGLE_BUFFERED && sketch.frameCount == 1) {
       restoreFirstFrame();
@@ -912,7 +961,16 @@ public abstract class PGL {
       createDepthAndStencilBuffer(true, depthBits, stencilBits, packed);
     }
 
-    validateFramebuffer();
+    int status = validateFramebuffer();
+
+    if (status == FRAMEBUFFER_INCOMPLETE_MULTISAMPLE && 1 < numSamples) {
+      System.err.println("Continuing with multisampling disabled");
+      reqNumSamples = 1;
+      destroyFBOLayer();
+      // try again
+      createFBOLayer();
+      return;
+    }
 
     // Clear all buffers.
     clearDepth(1);
@@ -1229,9 +1287,9 @@ public abstract class PGL {
     PGL ppgl = primaryPGL ? this : graphics.getPrimaryPGL();
 
     if (!ppgl.loadedTex2DShader || ppgl.tex2DShaderContext != ppgl.glContext) {
-      String[] preprocVertSrc = preprocessVertexSource(texVertShaderSource, getGLSLVersion());
+      String[] preprocVertSrc = preprocessVertexSource(texVertShaderSource, getGLSLVersion(), getGLSLVersionSuffix());
       String vertSource = PApplet.join(preprocVertSrc, "\n");
-      String[] preprocFragSrc = preprocessFragmentSource(tex2DFragShaderSource, getGLSLVersion());
+      String[] preprocFragSrc = preprocessFragmentSource(tex2DFragShaderSource, getGLSLVersion(), getGLSLVersionSuffix());
       String fragSource = PApplet.join(preprocFragSrc, "\n");
       ppgl.tex2DVertShader = createShader(VERTEX_SHADER, vertSource);
       ppgl.tex2DFragShader = createShader(FRAGMENT_SHADER, fragSource);
@@ -1361,9 +1419,9 @@ public abstract class PGL {
     PGL ppgl = primaryPGL ? this : graphics.getPrimaryPGL();
 
     if (!ppgl.loadedTexRectShader || ppgl.texRectShaderContext != ppgl.glContext) {
-      String[] preprocVertSrc = preprocessVertexSource(texVertShaderSource, getGLSLVersion());
+      String[] preprocVertSrc = preprocessVertexSource(texVertShaderSource, getGLSLVersion(), getGLSLVersionSuffix());
       String vertSource = PApplet.join(preprocVertSrc, "\n");
-      String[] preprocFragSrc = preprocessFragmentSource(texRectFragShaderSource, getGLSLVersion());
+      String[] preprocFragSrc = preprocessFragmentSource(texRectFragShaderSource, getGLSLVersion(), getGLSLVersionSuffix());
       String fragSource = PApplet.join(preprocFragSrc, "\n");
       ppgl.texRectVertShader = createShader(VERTEX_SHADER, vertSource);
       ppgl.texRectFragShader = createShader(FRAGMENT_SHADER, fragSource);
@@ -1790,6 +1848,7 @@ public abstract class PGL {
 
 
   abstract protected int getGLSLVersion();
+  abstract protected String getGLSLVersionSuffix();
 
 
   protected String[] loadVertexShader(String filename) {
@@ -1822,28 +1881,29 @@ public abstract class PGL {
   }
 
 
-  protected String[] loadVertexShader(String filename, int version) {
+  protected String[] loadVertexShader(String filename, int version, String versionSuffix) {
     return loadVertexShader(filename);
   }
 
 
-  protected String[] loadFragmentShader(String filename, int version) {
+  protected String[] loadFragmentShader(String filename, int version, String versionSuffix) {
     return loadFragmentShader(filename);
   }
 
 
-  protected String[] loadFragmentShader(URL url, int version) {
+  protected String[] loadFragmentShader(URL url, int version, String versionSuffix) {
     return loadFragmentShader(url);
   }
 
 
-  protected String[] loadVertexShader(URL url, int version) {
+  protected String[] loadVertexShader(URL url, int version, String versionSuffix) {
     return loadVertexShader(url);
   }
 
 
   protected static String[] preprocessFragmentSource(String[] fragSrc0,
-                                                     int version) {
+                                                     int version,
+                                                     String versionSuffix) {
     if (containsVersionDirective(fragSrc0)) {
       // The user knows what she or he is doing
       return fragSrc0;
@@ -1857,7 +1917,7 @@ public abstract class PGL {
       int offset = 1;
 
       fragSrc = preprocessShaderSource(fragSrc0, search, replace, offset);
-      fragSrc[0] = "#version " + version;
+      fragSrc[0] = "#version " + version + versionSuffix;
     } else {
       // We need to replace 'texture' uniform by 'texMap' uniform and
       // 'textureXXX()' functions by 'texture()' functions. Order of these
@@ -1865,7 +1925,7 @@ public abstract class PGL {
       Pattern[] search = new Pattern[] {
           Pattern.compile(String.format(GLSL_ID_REGEX, "varying|attribute")),
           Pattern.compile(String.format(GLSL_ID_REGEX, "texture")),
-          Pattern.compile(String.format(GLSL_FN_REGEX, "textureRect|texture2D|texture3D|textureCube")),
+          Pattern.compile(String.format(GLSL_FN_REGEX, "texture2DRect|texture2D|texture3D|textureCube")),
           Pattern.compile(String.format(GLSL_ID_REGEX, "gl_FragColor"))
       };
       String[] replace = new String[] {
@@ -1874,15 +1934,20 @@ public abstract class PGL {
       int offset = 2;
 
       fragSrc = preprocessShaderSource(fragSrc0, search, replace, offset);
-      fragSrc[0] = "#version " + version;
-      fragSrc[1] = "out vec4 _fragColor;";
+      fragSrc[0] = "#version " + version + versionSuffix;
+      if (" es".equals(versionSuffix)) {
+        fragSrc[1] = "out mediump vec4 _fragColor;";
+      } else {
+        fragSrc[1] = "out vec4 _fragColor;";
+      }
     }
 
     return fragSrc;
   }
 
   protected static String[] preprocessVertexSource(String[] vertSrc0,
-                                                   int version) {
+                                                   int version,
+                                                   String versionSuffix) {
     if (containsVersionDirective(vertSrc0)) {
       // The user knows what she or he is doing
       return vertSrc0;
@@ -1896,7 +1961,7 @@ public abstract class PGL {
       int offset = 1;
 
       vertSrc = preprocessShaderSource(vertSrc0, search, replace, offset);
-      vertSrc[0] = "#version " + version;
+      vertSrc[0] = "#version " + version + versionSuffix;
     } else {
       // We need to replace 'texture' uniform by 'texMap' uniform and
       // 'textureXXX()' functions by 'texture()' functions. Order of these
@@ -1905,7 +1970,7 @@ public abstract class PGL {
           Pattern.compile(String.format(GLSL_ID_REGEX, "varying")),
           Pattern.compile(String.format(GLSL_ID_REGEX, "attribute")),
           Pattern.compile(String.format(GLSL_ID_REGEX, "texture")),
-          Pattern.compile(String.format(GLSL_FN_REGEX, "textureRect|texture2D|texture3D|textureCube"))
+          Pattern.compile(String.format(GLSL_FN_REGEX, "texture2DRect|texture2D|texture3D|textureCube"))
       };
       String[] replace = new String[] {
           "out", "in", "texMap", "texture",
@@ -1913,7 +1978,7 @@ public abstract class PGL {
       int offset = 1;
 
       vertSrc = preprocessShaderSource(vertSrc0, search, replace, offset);
-      vertSrc[0] = "#version " + version;
+      vertSrc[0] = "#version " + version + versionSuffix;
     }
 
     return vertSrc;
@@ -1931,8 +1996,9 @@ public abstract class PGL {
     String[] src = new String[src0.length+offset];
     for (int i = 0; i < src0.length; i++) {
       String line = src0[i];
-      if (line.contains("#version")) {
-        line = "";
+      int versionIndex = line.indexOf("#version");
+      if (versionIndex >= 0) {
+        line = line.substring(0, versionIndex);
       }
       for (int j = 0; j < search.length; j++) {
         line = search[j].matcher(line).replaceAll(replace[j]);
@@ -1945,8 +2011,12 @@ public abstract class PGL {
   protected static boolean containsVersionDirective(String[] shSrc) {
     for (int i = 0; i < shSrc.length; i++) {
       String line = shSrc[i];
-      if (line.contains("#version")) {
-        return true;
+      int versionIndex = line.indexOf("#version");
+      if (versionIndex >= 0) {
+        int commentIndex = line.indexOf("//");
+        if (commentIndex < 0 || versionIndex < commentIndex) {
+          return true;
+        }
       }
     }
     return false;
@@ -1999,10 +2069,13 @@ public abstract class PGL {
   }
 
 
-  protected boolean validateFramebuffer() {
+  protected int validateFramebuffer() {
     int status = checkFramebufferStatus(FRAMEBUFFER);
     if (status == FRAMEBUFFER_COMPLETE) {
-      return true;
+      return 0;
+    } else if (status == FRAMEBUFFER_UNDEFINED) {
+      System.err.println(String.format(FRAMEBUFFER_ERROR,
+                                       "framebuffer undefined"));
     } else if (status == FRAMEBUFFER_INCOMPLETE_ATTACHMENT) {
       System.err.println(String.format(FRAMEBUFFER_ERROR,
                                        "incomplete attachment"));
@@ -2015,14 +2088,26 @@ public abstract class PGL {
     } else if (status == FRAMEBUFFER_INCOMPLETE_FORMATS) {
       System.err.println(String.format(FRAMEBUFFER_ERROR,
                                        "incomplete formats"));
+    } else if (status == FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER) {
+      System.err.println(String.format(FRAMEBUFFER_ERROR,
+                                       "incomplete draw buffer"));
+    } else if (status == FRAMEBUFFER_INCOMPLETE_READ_BUFFER) {
+      System.err.println(String.format(FRAMEBUFFER_ERROR,
+                                       "incomplete read buffer"));
     } else if (status == FRAMEBUFFER_UNSUPPORTED) {
       System.err.println(String.format(FRAMEBUFFER_ERROR,
                                        "framebuffer unsupported"));
+    } else if (status == FRAMEBUFFER_INCOMPLETE_MULTISAMPLE) {
+      System.err.println(String.format(FRAMEBUFFER_ERROR,
+                                       "incomplete multisample buffer"));
+    } else if (status == FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS) {
+      System.err.println(String.format(FRAMEBUFFER_ERROR,
+                                       "incomplete layer targets"));
     } else {
       System.err.println(String.format(FRAMEBUFFER_ERROR,
-                                       "unknown error"));
+                                       "unknown error " + status));
     }
-    return false;
+    return status;
   }
 
   protected boolean isES() {
@@ -2147,7 +2232,7 @@ public abstract class PGL {
 
   protected boolean hasAnisoSamplingSupport() {
     int major = getGLVersion()[0];
-    if (major < 3) {
+    if (isES() || major < 3) {
       String ext = getString(EXTENSIONS);
       return -1 < ext.indexOf("_texture_filter_anisotropic");
     } else {
@@ -2596,12 +2681,17 @@ public abstract class PGL {
 
 
   protected interface Tessellator {
-    public void beginPolygon();
-    public void endPolygon();
+    public void setCallback(int flag);
     public void setWindingRule(int rule);
+    public void setProperty(int property, int value);
+
+    public void beginPolygon();
+    public void beginPolygon(Object data);
+    public void endPolygon();
     public void beginContour();
     public void endContour();
     public void addVertex(double[] v);
+    public void addVertex(double[] v, int n, Object data);
   }
 
 
@@ -2713,6 +2803,7 @@ public abstract class PGL {
 
   public static int TESS_WINDING_NONZERO;
   public static int TESS_WINDING_ODD;
+  public static int TESS_EDGE_FLAG;
 
   public static int GENERATE_MIPMAP_HINT;
   public static int FASTEST;
@@ -2936,6 +3027,7 @@ public abstract class PGL {
   public static int DEPTH_STENCIL;
 
   public static int FRAMEBUFFER_COMPLETE;
+  public static int FRAMEBUFFER_UNDEFINED;
   public static int FRAMEBUFFER_INCOMPLETE_ATTACHMENT;
   public static int FRAMEBUFFER_INCOMPLETE_MISSING_ATTACHMENT;
   public static int FRAMEBUFFER_INCOMPLETE_DIMENSIONS;
@@ -2943,6 +3035,8 @@ public abstract class PGL {
   public static int FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER;
   public static int FRAMEBUFFER_INCOMPLETE_READ_BUFFER;
   public static int FRAMEBUFFER_UNSUPPORTED;
+  public static int FRAMEBUFFER_INCOMPLETE_MULTISAMPLE;
+  public static int FRAMEBUFFER_INCOMPLETE_LAYER_TARGETS;
 
   public static int FRAMEBUFFER_ATTACHMENT_OBJECT_TYPE;
   public static int FRAMEBUFFER_ATTACHMENT_OBJECT_NAME;

@@ -39,7 +39,7 @@ import processing.data.StringDict;
 
 
 public class ContributionManager {
-  static final ContributionListing listing = ContributionListing.getInstance();
+  static ContributionListing listing;
 
 
   /**
@@ -61,6 +61,7 @@ public class ContributionManager {
     boolean success = false;
     try {
       HttpURLConnection conn = (HttpURLConnection) source.openConnection();
+      // Will not handle a protocol change (see below)
       HttpURLConnection.setFollowRedirects(true);
       conn.setConnectTimeout(15 * 1000);
       conn.setReadTimeout(60 * 1000);
@@ -89,27 +90,37 @@ public class ContributionManager {
         progress.startTask(Language.text("contrib.progress.downloading"), fileSize);
       }
 
-      InputStream in = conn.getInputStream();
-      FileOutputStream out = new FileOutputStream(dest);
+      int response = conn.getResponseCode();
+      // Default won't follow HTTP -> HTTPS redirects for security reasons
+      // http://stackoverflow.com/a/1884427
+      if (response >= 300 && response < 400) {
+        // Handle SSL redirects from HTTP sources
+        // https://github.com/processing/processing/issues/5554
+        String newLocation = conn.getHeaderField("Location");
+        return download(new URL(newLocation), post, dest, progress);
 
-      byte[] b = new byte[8192];
-      int amount;
-      if (progress != null) {
-        int total = 0;
-        while (!progress.isCanceled() && (amount = in.read(b)) != -1) {
-          out.write(b, 0, amount);
-          total += amount;
-          progress.setProgress(total);
-        }
       } else {
-        while ((amount = in.read(b)) != -1) {
-          out.write(b, 0, amount);
-        }
-      }
-      out.flush();
-      out.close();
-      success = true;
+        InputStream in = conn.getInputStream();
+        FileOutputStream out = new FileOutputStream(dest);
 
+        byte[] b = new byte[8192];
+        int amount;
+        if (progress != null) {
+          int total = 0;
+          while (!progress.isCanceled() && (amount = in.read(b)) != -1) {
+            out.write(b, 0, amount);
+            total += amount;
+            progress.setProgress(total);
+          }
+        } else {
+          while ((amount = in.read(b)) != -1) {
+            out.write(b, 0, amount);
+          }
+        }
+        out.flush();
+        out.close();
+        success = true;
+      }
     } catch (SocketTimeoutException ste) {
       if (progress != null) {
         progress.error(ste);
@@ -120,8 +131,6 @@ public class ContributionManager {
         progress.error(ioe);
         progress.cancel();
       }
-      // Hiding stack trace. An error has been shown where needed.
-//      ioe.printStackTrace();
     }
     if (progress != null) {
       progress.finished();
@@ -361,7 +370,7 @@ public class ContributionManager {
     editor.getTextArea().setEditable(false);
 //    base.getActiveEditor().getConsole().clear();
 
-    List<String> installedLibList = new ArrayList<String>();
+    List<String> installedLibList = new ArrayList<>();
 
     // boolean variable to check if previous lib was installed successfully,
     // to give the user an idea about progress being made.
@@ -543,6 +552,8 @@ public class ContributionManager {
       @Override
       protected Void doInBackground() throws Exception {
         try {
+          // TODO: pls explain the sleep and why this runs on a worker thread,
+          //   but a couple of lines above on EDT [jv]
           Thread.sleep(1000);
           installPreviouslyFailed(base, Base.getSketchbookToolsFolder());
         } catch (InterruptedException e) {
@@ -588,8 +599,10 @@ public class ContributionManager {
                 LocalContribution.isDeletionFlagged(folder));
       }
     });
-    for (File folder : markedForDeletion) {
-      Util.removeDir(folder);
+    if (markedForDeletion != null) {
+      for (File folder : markedForDeletion) {
+        Util.removeDir(folder);
+      }
     }
   }
 
@@ -610,7 +623,9 @@ public class ContributionManager {
         if (file.getName().equals(contrib.getName())) {
           file.delete();
           installOnStartUp(base, contrib);
-          listing.replaceContribution(contrib, contrib);
+          EventQueue.invokeAndWait(() -> {
+            listing.replaceContribution(contrib, contrib);
+          });
         }
       }
     }
@@ -628,8 +643,14 @@ public class ContributionManager {
       }
     });
 
-    ArrayList<String> updateContribsNames = new ArrayList<String>();
-    LinkedList<AvailableContribution> updateContribsList = new LinkedList<AvailableContribution>();
+    List<String> updateContribsNames = new ArrayList<>();
+    List<AvailableContribution> updateContribsList = new LinkedList<>();
+
+    // TODO This is bad code... This root.getName() stuff to get the folder
+    // type, plus "libraries.properties" (not the correct file name),
+    // and I have no idea what "putting this here, in just in case" means.
+    // Not sure the function here so I'm not fixing it at the moment,
+    // but this whole function could use some cleaning. [fry 180105]
 
     String type = root.getName().substring(root.getName().lastIndexOf('/') + 1);
     String propFileName = null;
@@ -700,6 +721,7 @@ public class ContributionManager {
 
 
   static public void init(Base base) throws Exception {
+    listing = ContributionListing.getInstance(); // Moved here to make sure it runs on EDT [jv 170121]
     managerDialog = new ManagerFrame(base);
     cleanup(base);
   }

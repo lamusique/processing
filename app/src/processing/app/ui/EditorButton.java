@@ -2,7 +2,8 @@
 
 /*
   Part of the Processing project - http://processing.org
-  Copyright (c) 2015 The Processing Foundation
+
+  Copyright (c) 2015-19 The Processing Foundation
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License version 2
@@ -30,7 +31,7 @@ import processing.app.Mode;
 
 abstract public class EditorButton extends JComponent
 implements MouseListener, MouseMotionListener, ActionListener {
-  static public final int DIM = 30;
+  static public final int DIM = Toolkit.zoom(30);
 
   /** Button's description. */
   protected String title;
@@ -112,10 +113,18 @@ implements MouseListener, MouseMotionListener, ActionListener {
     } else if (rollover) {
       image = rolloverImage;
     }
+
+    Graphics2D g2 = (Graphics2D) g;
+    g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                        RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+
+    int dim = getSize().width;  // width == height
     if (gradient != null) {
-      g.drawImage(gradient, 0, 0, DIM, DIM, this);
+      //g.drawImage(gradient, 0, 0, DIM, DIM, this);
+      g.drawImage(gradient, 0, 0, dim, dim, this);
     }
-    g.drawImage(image, 0, 0, DIM, DIM, this);
+    //g.drawImage(image, 0, 0, DIM, DIM, this);
+    g.drawImage(image, 0, 0, dim, dim, this);
   }
 
 

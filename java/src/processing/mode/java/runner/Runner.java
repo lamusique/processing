@@ -24,15 +24,19 @@ package processing.mode.java.runner;
 
 import processing.app.*;
 import processing.app.exec.StreamRedirectThread;
-import processing.app.ui.Editor;
+import processing.app.ui.Toolkit;
 import processing.core.*;
 import processing.data.StringList;
 import processing.mode.java.JavaBuild;
+import processing.mode.java.JavaEditor;
 
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
 import java.io.*;
+import java.net.ConnectException;
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.*;
 
 import com.sun.jdi.*;
@@ -58,7 +62,7 @@ public class Runner implements MessageConsumer {
   protected RunnerListener listener;
 
   // Running remote VM
-  protected VirtualMachine vm;
+  protected volatile VirtualMachine vm;
   protected boolean vmReturnedError;
 
   // Thread transferring remote error stream to our error stream
@@ -68,12 +72,15 @@ public class Runner implements MessageConsumer {
   protected Thread outThread = null;
 
   protected SketchException exception;
-  protected Editor editor;
+  protected JavaEditor editor;
   protected JavaBuild build;
   protected Process process;
 
   protected PrintStream sketchErr;
   protected PrintStream sketchOut;
+
+  protected volatile boolean cancelled;
+  protected final Object cancelLock = new Object[0];
 
 
   public Runner(JavaBuild build, RunnerListener listener) throws SketchException {
@@ -81,8 +88,10 @@ public class Runner implements MessageConsumer {
 //    this.sketch = sketch;
     this.build = build;
 
-    if (listener instanceof Editor) {
-      this.editor = (Editor) listener;
+    checkLocalHost();
+
+    if (listener instanceof JavaEditor) {
+      this.editor = (JavaEditor) listener;
       sketchErr = editor.getConsole().getErr();
       sketchOut = editor.getConsole().getOut();
     } else {
@@ -111,6 +120,29 @@ public class Runner implements MessageConsumer {
           //  "To use this library, you must use the 32-bit version of Processing."
         }
       }
+    }
+  }
+
+
+  /**
+   * Has the user screwed up their hosts file?
+   * https://github.com/processing/processing/issues/4738
+   */
+  static private void checkLocalHost() throws SketchException {
+    try {
+      InetAddress address = InetAddress.getByName("localhost");
+      if (!address.getHostAddress().equals("127.0.0.1")) {
+        System.err.println("Your computer is not properly mapping 'localhost' to '127.0.0.1',");
+        System.err.println("which prevents sketches from working properly because 'localhost'");
+        System.err.println("is needed to connect the PDE to your sketch while it's running.");
+        System.err.println("If you don't recall making this change, or know how to fix it:");
+        System.err.println("https://www.google.com/search?q=add+localhost+to+hosts+file+" + Platform.getName());
+        throw new SketchException("Cannot run due to changes in your 'hosts' file. " +
+                                  "See the console for details.", false);
+      }
+
+    } catch (UnknownHostException e) {
+      e.printStackTrace();
     }
   }
 
@@ -190,6 +222,13 @@ public class Runner implements MessageConsumer {
 
     commandArgs.append(vmParams);
     commandArgs.append(sketchParams);
+
+    // Opportunistically quit if the launch was cancelled,
+    // the next chance to cancel will be after connecting to the VM
+    if (cancelled) {
+      return false;
+    }
+
     launchJava(commandArgs.array());
 
     AttachingConnector connector = (AttachingConnector)
@@ -220,21 +259,37 @@ public class Runner implements MessageConsumer {
 //      while (!available) {
       while (true) {
         try {
-          vm = connector.attach(arguments);
+          Messages.log(getClass().getName() + " attempting to attach to VM");
+          synchronized (cancelLock) {
+            vm = connector.attach(arguments);
+            if (cancelled && vm != null) {
+              // cancelled and connected to the VM, handle closing now
+              Messages.log(getClass().getName() + " aborting, launch cancelled");
+              close();
+              return false;
+            }
+          }
 //          vm = connector.attach(arguments);
           if (vm != null) {
+            Messages.log(getClass().getName() + " attached to the VM");
 //            generateTrace();
 //            available = true;
             return true;
           }
-        } catch (IOException e) {
+        } catch (ConnectException ce) {
+          // This will fire ConnectException (socket not available) until
+          // the VM finishes starting up and opens its socket for us.
+          Messages.log(getClass().getName() + " socket for VM not ready");
 //          System.out.println("waiting");
 //          e.printStackTrace();
           try {
             Thread.sleep(100);
-          } catch (InterruptedException e1) {
-            e1.printStackTrace(sketchErr);
+          } catch (InterruptedException ie) {
+            Messages.loge(getClass().getName() + " interrupted", ie);
+//            ie.printStackTrace(sketchErr);
           }
+        } catch (IOException e) {
+          Messages.loge(getClass().getName() + " while attaching to VM", e);
         }
       }
 //    } catch (IOException exc) {
@@ -266,17 +321,32 @@ public class Runner implements MessageConsumer {
       }
     }
 
-//    params.add("-Djava.ext.dirs=nuffing");
-
     if (Preferences.getBoolean("run.options.memory")) {
       params.append("-Xms" + Preferences.get("run.options.memory.initial") + "m");
       params.append("-Xmx" + Preferences.get("run.options.memory.maximum") + "m");
     }
 
+    // Surprised this wasn't here before; added for 3.2.1
+    params.append("-Djna.nosys=true");
+
+    // Added for 3.2.1, was still using the default ext.dirs in the PDE
+    try {
+      String extPath =
+        new File(Platform.getJavaHome(), "lib/ext").getCanonicalPath();
+      // quoting this on OS X causes it to fail
+      //params.append("-Djava.ext.dirs=\"" + extPath + "\"");
+      params.append("-Djava.ext.dirs=" + extPath);
+    } catch (IOException e) {
+      e.printStackTrace();
+    }
+
     if (Platform.isMacOS()) {
+      // This successfully sets the application menu name,
+      // but somehow, not the dock name itself.
       params.append("-Xdock:name=" + build.getSketchClassName());
-//      params.add("-Dcom.apple.mrj.application.apple.menu.about.name=" +
-//                 sketch.getMainClassName());
+      // No longer needed / doesn't seem to do anything differently
+      //params.append("-Dcom.apple.mrj.application.apple.menu.about.name=" +
+      //              build.getSketchClassName());
     }
     // sketch.libraryPath might be ""
     // librariesClassPath will always have sep char prepended
@@ -309,7 +379,9 @@ public class Runner implements MessageConsumer {
     } else {
       params.append("processing.core.PApplet");
 
-      // get the stored device index (starts at 1)
+      // Get the stored device index (starts at 1)
+      // By default, set to -1, meaning 'the default display',
+      // which is the same display as the one being used by the Editor.
       int runDisplay = Preferences.getInteger("run.display");
 
       // If there was a saved location (this guy has been run more than once)
@@ -329,20 +401,23 @@ public class Runner implements MessageConsumer {
         // Make sure the display set in Preferences actually exists
         GraphicsDevice runDevice = editorDevice;
         if (runDisplay > 0 && runDisplay <= devices.length) {
-          runDevice = devices[runDisplay-1];
+            runDevice = devices[runDisplay-1];
         } else {
-          // If a bad display is selected, use the same display as the editor
+          // If a bad display (or -1 display) is selected, use the same display as the editor
           if (runDisplay > 0) {  // don't complain about -1 or 0
             System.err.println("Display " + runDisplay + " not available.");
           }
           runDevice = editorDevice;
           for (int i = 0; i < devices.length; i++) {
             if (devices[i] == runDevice) {
+              // Prevent message on the first run
+              if (runDisplay != -1) {
+                System.err.println("Setting 'Run Sketches on Display' preference to display " + (i+1));
+              }
+              runDisplay = i + 1;
               // Wasn't setting the pref to avoid screwing things up with
               // something temporary. But not setting it makes debugging one's
               // setup just too damn weird, so changing that behavior.
-              runDisplay = i + 1;
-              System.err.println("Setting 'Run Sketches on Display' preference to display " + runDisplay);
               Preferences.setInteger("run.display", runDisplay);
               break;
             }
@@ -399,6 +474,10 @@ public class Runner implements MessageConsumer {
       // There was a PDE X hack that put this after the class name, but it was
       // removed for 3.0a6 because it would break the args passed to sketches.
       params.append(PApplet.ARGS_SKETCH_FOLDER + "=" + build.getSketchPath());
+
+      if (Toolkit.zoom(100) >= 200) { // Use 100 to bypass possible rounding in zoom()
+        params.append(PApplet.ARGS_DENSITY + "=2");
+      }
 
       params.append(build.getSketchClassName());
     }
@@ -475,29 +554,28 @@ public class Runner implements MessageConsumer {
     //vm.setDebugTraceMode(debugTraceMode);
 //    vm.setDebugTraceMode(VirtualMachine.TRACE_ALL);
 //    vm.setDebugTraceMode(VirtualMachine.TRACE_NONE);  // formerly, seems to have no effect
+    try {
+      // Calling this seems to set something internally to make the
+      // Eclipse JDI wake up. Without it, an ObjectCollectedException
+      // is thrown on excReq.enable(). No idea why this works,
+      // but at least exception handling has returned. (Suspect that it may
+      // block until all or at least some threads are available, meaning
+      // that the app has launched and we have legit objects to talk to).
+      vm.allThreads();
+      // The bug may not have been noticed because the test suite waits for
+      // a thread to be available, and queries it by calling allThreads().
+      // See org.eclipse.debug.jdi.tests.AbstractJDITest for the example.
 
-    // Calling this seems to set something internally to make the
-    // Eclipse JDI wake up. Without it, an ObjectCollectedException
-    // is thrown on excReq.enable(). No idea why this works,
-    // but at least exception handling has returned. (Suspect that it may
-    // block until all or at least some threads are available, meaning
-    // that the app has launched and we have legit objects to talk to).
-    vm.allThreads();
-    // The bug may not have been noticed because the test suite waits for
-    // a thread to be available, and queries it by calling allThreads().
-    // See org.eclipse.debug.jdi.tests.AbstractJDITest for the example.
-
-    EventRequestManager mgr = vm.eventRequestManager();
-    // get only the uncaught exceptions
-    ExceptionRequest excReq = mgr.createExceptionRequest(null, false, true);
-//    System.out.println(excReq);
-    // this version reports all exceptions, caught or uncaught
-//  ExceptionRequest excReq = mgr.createExceptionRequest(null, true, true);
-    // suspend so we can step
-    excReq.setSuspendPolicy(EventRequest.SUSPEND_ALL);
-//    excReq.setSuspendPolicy(EventRequest.SUSPEND_EVENT_THREAD);
-//    excReq.setSuspendPolicy(EventRequest.SUSPEND_NONE);  // another option?
-    excReq.enable();
+      EventRequestManager mgr = vm.eventRequestManager();
+      // get only the uncaught exceptions
+      ExceptionRequest excReq = mgr.createExceptionRequest(null, false, true);
+      // this version reports all exceptions, caught or uncaught
+      // suspend so we can step
+      excReq.setSuspendPolicy(EventRequest.SUSPEND_ALL);
+      excReq.enable();
+    } catch (VMDisconnectedException ignore) {
+      return;
+    }
 
     Thread eventThread = new Thread() {
       public void run() {
@@ -562,7 +640,9 @@ public class Runner implements MessageConsumer {
       // or the user manually closes the sketch window.
       // TODO this should be handled better, should it not?
       if (editor != null) {
-        editor.deactivateRun();
+        java.awt.EventQueue.invokeLater(() -> {
+          editor.onRunnerExiting(Runner.this);
+        });
       }
     } catch (InterruptedException exc) {
       // we don't interrupt
@@ -631,7 +711,9 @@ public class Runner implements MessageConsumer {
     handleCommonErrors(exceptionName, message, listener, sketchErr);
 
     if (editor != null) {
-      editor.deactivateRun();
+      java.awt.EventQueue.invokeLater(() -> {
+        editor.onRunnerExiting(Runner.this);
+      });
     }
   }
 
@@ -684,9 +766,9 @@ public class Runner implements MessageConsumer {
 
     } else if (exceptionClass.equals("java.lang.UnsupportedClassVersionError")) {
       listener.statusError("UnsupportedClassVersionError: A library is using code compiled with an unsupported version of Java.");
-      err.println("This version of Processing only supports libraries and JAR files compiled for Java 1.6 or earlier.");
-      err.println("A library used by this sketch was compiled for Java 1.7 or later, ");
-      err.println("and needs to be recompiled to be compatible with Java 1.6.");
+      err.println("This version of Processing only supports libraries and JAR files compiled for Java 1.8 or earlier.");
+      err.println("A library used by this sketch was compiled for Java 1.9 or later, ");
+      err.println("and needs to be recompiled to be compatible with Java 1.8.");
 
     } else if (exceptionClass.equals("java.lang.NoSuchMethodError") ||
                exceptionClass.equals("java.lang.NoSuchFieldError")) {
@@ -799,19 +881,22 @@ public class Runner implements MessageConsumer {
 
 
   public void close() {
-    // TODO make sure stop() has already been called to exit the sketch
+    synchronized (cancelLock) {
+      cancelled = true;
 
-    // TODO actually kill off the vm here
-    if (vm != null) {
-      try {
-        vm.exit(0);
+      // TODO make sure stop() has already been called to exit the sketch
 
-      } catch (com.sun.jdi.VMDisconnectedException vmde) {
-        // if the vm has disconnected on its own, ignore message
-        //System.out.println("harmless disconnect " + vmde.getMessage());
-        // TODO shouldn't need to do this, need to do more cleanup
+      // TODO actually kill off the vm here
+      if (vm != null) {
+        try {
+          vm.exit(0);
+
+        } catch (com.sun.jdi.VMDisconnectedException vmde) {
+          // if the vm has disconnected on its own, ignore message
+          //System.out.println("harmless disconnect " + vmde.getMessage());
+          // TODO shouldn't need to do this, need to do more cleanup
+        }
       }
-      vm = null;
     }
   }
 
@@ -832,7 +917,9 @@ public class Runner implements MessageConsumer {
       if (editor != null) {
 //        editor.internalCloseRunner();  // [091124]
 //        editor.handleStop();  // prior to 0192
-        editor.internalCloseRunner();  // 0192
+        java.awt.EventQueue.invokeLater(() -> {
+          editor.internalCloseRunner();  // 0192
+        });
       }
       return;
     }

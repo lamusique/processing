@@ -123,7 +123,7 @@ public class JSONObject {
    * string objects. This is used by JSONObject.put(string, object).
    */
   private static HashMap<String, Object> keyPool =
-    new HashMap<String, Object>(keyPoolSize);
+    new HashMap<>(keyPoolSize);
 
 
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -197,7 +197,7 @@ public class JSONObject {
    * @nowebref
    */
   public JSONObject() {
-    this.map = new HashMap<String, Object>();
+    this.map = new HashMap<>();
   }
 
 
@@ -291,7 +291,7 @@ public class JSONObject {
    *  the JSONObject.
    */
   protected JSONObject(HashMap<String, Object> map) {
-    this.map = new HashMap<String, Object>();
+    this.map = new HashMap<>();
     if (map != null) {
       Iterator i = map.entrySet().iterator();
       while (i.hasNext()) {
@@ -309,7 +309,7 @@ public class JSONObject {
    * @nowebref
    */
   public JSONObject(IntDict dict) {
-    map = new HashMap<String, Object>();
+    map = new HashMap<>();
     for (int i = 0; i < dict.size(); i++) {
       setInt(dict.key(i), dict.value(i));
     }
@@ -320,7 +320,7 @@ public class JSONObject {
    * @nowebref
    */
   public JSONObject(FloatDict dict) {
-    map = new HashMap<String, Object>();
+    map = new HashMap<>();
     for (int i = 0; i < dict.size(); i++) {
       setFloat(dict.key(i), dict.value(i));
     }
@@ -331,7 +331,7 @@ public class JSONObject {
    * @nowebref
    */
   public JSONObject(StringDict dict) {
-    map = new HashMap<String, Object>();
+    map = new HashMap<>();
     for (int i = 0; i < dict.size(); i++) {
       setString(dict.key(i), dict.value(i));
     }
@@ -537,13 +537,17 @@ public class JSONObject {
    * @return      The object associated with the key.
    * @throws      RuntimeException if the key is not found.
    */
-  private Object get(String key) {
+  public Object get(String key) {
     if (key == null) {
-      throw new RuntimeException("Null key.");
+      throw new RuntimeException("JSONObject.get(null) called");
     }
     Object object = this.opt(key);
     if (object == null) {
-      throw new RuntimeException("JSONObject[" + quote(key) + "] not found.");
+      // Adding for rev 0257 in line with other p5 api
+      return null;
+    }
+    if (object == null) {
+      throw new RuntimeException("JSONObject[" + quote(key) + "] not found");
     }
     return object;
   }
@@ -563,10 +567,14 @@ public class JSONObject {
    */
   public String getString(String key) {
     Object object = this.get(key);
+    if (object == null) {
+      // Adding for rev 0257 in line with other p5 api
+      return null;
+    }
     if (object instanceof String) {
       return (String)object;
     }
-    throw new RuntimeException("JSONObject[" + quote(key) + "] not a string.");
+    throw new RuntimeException("JSONObject[" + quote(key) + "] is not a string");
   }
 
 
@@ -599,10 +607,12 @@ public class JSONObject {
    */
   public int getInt(String key) {
     Object object = this.get(key);
+    if (object == null) {
+      throw new RuntimeException("JSONObject[" + quote(key) + "] not found");
+    }
     try {
-      return object instanceof Number
-        ? ((Number)object).intValue()
-          : Integer.parseInt((String)object);
+      return object instanceof Number ?
+        ((Number)object).intValue() : Integer.parseInt((String)object);
     } catch (Exception e) {
       throw new RuntimeException("JSONObject[" + quote(key) + "] is not an int.");
     }
@@ -778,14 +788,17 @@ public class JSONObject {
    * @webref jsonobject:method
    * @brief Gets the JSONArray value associated with a key
    * @param key a key string
-   * @return A JSONArray which is the value.
-   * @throws RuntimeException if the key is not found or if the value is not a JSONArray.
+   * @return A JSONArray which is the value, or null if not present
+   * @throws RuntimeException if the value is not a JSONArray.
    * @see JSONObject#getJSONObject(String)
    * @see JSONObject#setJSONObject(String, JSONObject)
    * @see JSONObject#setJSONArray(String, JSONArray)
    */
   public JSONArray getJSONArray(String key) {
     Object object = this.get(key);
+    if (object == null) {
+      return null;
+    }
     if (object instanceof JSONArray) {
       return (JSONArray)object;
     }
@@ -799,14 +812,17 @@ public class JSONObject {
    * @webref jsonobject:method
    * @brief Gets the JSONObject value associated with a key
    * @param key a key string
-   * @return A JSONObject which is the value.
-   * @throws RuntimeException if the key is not found or if the value is not a JSONObject.
+   * @return A JSONObject which is the value or null if not available.
+   * @throws RuntimeException if the value is not a JSONObject.
    * @see JSONObject#getJSONArray(String)
    * @see JSONObject#setJSONObject(String, JSONObject)
    * @see JSONObject#setJSONArray(String, JSONArray)
    */
   public JSONObject getJSONObject(String key) {
     Object object = this.get(key);
+    if (object == null) {
+      return null;
+    }
     if (object instanceof JSONObject) {
       return (JSONObject)object;
     }
@@ -864,7 +880,7 @@ public class JSONObject {
    * @return      true if the key exists in the JSONObject.
    */
   public boolean hasKey(String key) {
-    return this.map.containsKey(key);
+    return map.containsKey(key);
   }
 
 
@@ -897,9 +913,9 @@ public class JSONObject {
 
 
   /**
-   * Determine if the value associated with the key is null or if there is 
+   * Determine if the value associated with the key is null or if there is
    * no value.
-   * 
+   *
    * @webref
    * @param key   A key string.
    * @return      true if there is no value associated with the key or if
@@ -1196,7 +1212,7 @@ public class JSONObject {
    * @see JSONObject#setBoolean(String, boolean)
    */
   public JSONObject setFloat(String key, float value) {
-    this.put(key, new Double(value));
+    this.put(key, Double.valueOf(value));
     return this;
   }
 
@@ -1210,7 +1226,7 @@ public class JSONObject {
    * @throws RuntimeException If the key is null or if the number is NaN or infinite.
    */
   public JSONObject setDouble(String key, double value) {
-    this.put(key, new Double(value));
+    this.put(key, Double.valueOf(value));
     return this;
   }
 
@@ -1300,7 +1316,7 @@ public class JSONObject {
    * @throws RuntimeException If the value is non-finite number
    *  or if the key is null.
    */
-  private JSONObject put(String key, Object value) {
+  public JSONObject put(String key, Object value) {
     String pooled;
     if (key == null) {
       throw new RuntimeException("Null key.");
@@ -1310,7 +1326,7 @@ public class JSONObject {
       pooled = (String)keyPool.get(key);
       if (pooled == null) {
         if (keyPool.size() >= keyPoolSize) {
-          keyPool = new HashMap<String, Object>(keyPoolSize);
+          keyPool = new HashMap<>(keyPoolSize);
         }
         keyPool.put(key, key);
       } else {
@@ -1371,7 +1387,7 @@ public class JSONObject {
    * @param string A String
    * @return  A String correctly formatted for insertion in a JSON text.
    */
-  static protected String quote(String string) {
+  static public String quote(String string) {
     StringWriter sw = new StringWriter();
     synchronized (sw.getBuffer()) {
       try {
@@ -1383,7 +1399,7 @@ public class JSONObject {
     }
   }
 
-  static protected Writer quote(String string, Writer w) throws IOException {
+  static public Writer quote(String string, Writer w) throws IOException {
     if (string == null || string.length() == 0) {
       w.write("\"\"");
       return w;

@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2012-15 The Processing Foundation
+  Copyright (c) 2012-19 The Processing Foundation
   Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
@@ -69,7 +69,9 @@ public class PreferencesFrame {
   JCheckBox warningsCheckerBox;
   JCheckBox codeCompletionBox;
   JCheckBox importSuggestionsBox;
-  //JCheckBox codeCompletionTriggerBox;
+
+  JComboBox<String> zoomSelectionBox;
+  JCheckBox zoomAutoBox;
 
   JComboBox<String> displaySelectionBox;
   JComboBox<String> languageSelectionBox;
@@ -96,9 +98,9 @@ public class PreferencesFrame {
 
     pain.setLayout(layout);
 
-    final int BORDER = Platform.isMacOS() ? 20 : 13;
-
-    JLabel sketchbookLocationLabel, restartProcessingLabel;
+    JLabel sketchbookLocationLabel;
+    JLabel languageRestartLabel;
+    JLabel zoomRestartLabel;
     JButton browseButton; //, button2;
 
 
@@ -123,7 +125,7 @@ public class PreferencesFrame {
     // Language: [ English ] (requires restart of Processing)
 
     JLabel languageLabel = new JLabel(Language.text("preferences.language")+": ");
-    languageSelectionBox = new JComboBox<String>();
+    languageSelectionBox = new JComboBox<>();
 
     Map<String, String> languages = Language.getLanguages();
     String[] languageSelection = new String[languages.size()];
@@ -134,8 +136,8 @@ public class PreferencesFrame {
         languageSelection[i++] = lang.getValue();
       }
     }
-    languageSelectionBox.setModel(new DefaultComboBoxModel<String>(languageSelection));
-    restartProcessingLabel = new JLabel(" (" + Language.text("preferences.requires_restart") + ")");
+    languageSelectionBox.setModel(new DefaultComboBoxModel<>(languageSelection));
+    languageRestartLabel = new JLabel(" (" + Language.text("preferences.requires_restart") + ")");
 
 
     // Editor and console font [ Source Code Pro ]
@@ -144,7 +146,7 @@ public class PreferencesFrame {
     final String fontTip = "<html>" + Language.text("preferences.editor_and_console_font.tip");
     fontLabel.setToolTipText(fontTip);
     // get a wide name in there before getPreferredSize() is called
-    fontSelectionBox = new JComboBox<String>(new String[] { Toolkit.getMonoFontName() });
+    fontSelectionBox = new JComboBox<>(new String[] { Toolkit.getMonoFontName() });
     fontSelectionBox.setToolTipText(fontTip);
     fontSelectionBox.setEnabled(false);  // don't enable until fonts are loaded
 
@@ -152,11 +154,30 @@ public class PreferencesFrame {
     // Editor font size [ 12 ]  Console font size [ 10 ]
 
     JLabel fontSizelabel = new JLabel(Language.text("preferences.editor_font_size")+": ");
-    fontSizeField = new JComboBox<Integer>(FONT_SIZES);
+    fontSizeField = new JComboBox<>(FONT_SIZES);
 
     JLabel consoleFontSizeLabel = new JLabel(Language.text("preferences.console_font_size")+": ");
-    consoleFontSizeField = new JComboBox<Integer>(FONT_SIZES);
+    consoleFontSizeField = new JComboBox<>(FONT_SIZES);
     fontSizeField.setSelectedItem(Preferences.getFont("editor.font.size"));
+
+
+    // Interface scale: [ 100% ] (requires restart of Processing)
+
+    JLabel zoomLabel = new JLabel(Language.text("preferences.zoom") + ": ");
+
+    zoomAutoBox = new JCheckBox(Language.text("preferences.zoom.auto"));
+    zoomAutoBox.addChangeListener(new ChangeListener() {
+      @Override
+      public void stateChanged(ChangeEvent e) {
+        zoomSelectionBox.setEnabled(!zoomAutoBox.isSelected());
+      }
+    });
+
+    zoomSelectionBox = new JComboBox<>();
+    zoomSelectionBox.setModel(new DefaultComboBoxModel<>(Toolkit.zoomOptions.array()));
+    zoomRestartLabel = new JLabel(" (" + Language.text("preferences.requires_restart") + ")");
+
+    //
 
     JLabel backgroundColorLabel = new JLabel(Language.text("preferences.background_color")+": ");
 
@@ -326,7 +347,7 @@ public class PreferencesFrame {
     JLabel displayLabel = new JLabel(Language.text("preferences.run_sketches_on_display") + ": ");
     final String tip = "<html>" + Language.text("preferences.run_sketches_on_display.tip");
     displayLabel.setToolTipText(tip);
-    displaySelectionBox = new JComboBox<String>();
+    displaySelectionBox = new JComboBox<>();
     updateDisplayList();  // needs to happen here for getPreferredSize()
 
 
@@ -383,7 +404,7 @@ public class PreferencesFrame {
 
     final int buttonWidth = Toolkit.getButtonWidth();
     layout.setHorizontalGroup(layout.createSequentialGroup() // sequential group for border + mainContent + border
-      .addGap(BORDER)
+      .addGap(Toolkit.BORDER)
       .addGroup(layout.createParallelGroup() // parallel group for rest of the components
           .addComponent(sketchbookLocationLabel)
           .addGroup(layout.createSequentialGroup()
@@ -392,7 +413,7 @@ public class PreferencesFrame {
           .addGroup(layout.createSequentialGroup()
                       .addComponent(languageLabel)
                       .addComponent(languageSelectionBox,GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE) // This makes the component non-resizable in the X direction
-                      .addComponent(restartProcessingLabel))
+                      .addComponent(languageRestartLabel))
           .addGroup(layout.createSequentialGroup()
                       .addComponent(fontLabel)
                       .addComponent(fontSelectionBox, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE))
@@ -402,6 +423,11 @@ public class PreferencesFrame {
                       .addComponent(fontSizeField, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE)
                       .addComponent(consoleFontSizeLabel)
                       .addComponent(consoleFontSizeField, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE))
+          .addGroup(layout.createSequentialGroup()
+                      .addComponent(zoomLabel)
+                      .addComponent(zoomAutoBox)
+                      .addComponent(zoomSelectionBox, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE)
+                      .addComponent(zoomRestartLabel))
           .addGroup(layout.createSequentialGroup()
                       .addComponent(backgroundColorLabel)
                       .addComponent(hashLabel, GroupLayout.PREFERRED_SIZE, GroupLayout.DEFAULT_SIZE, GroupLayout.PREFERRED_SIZE)
@@ -440,11 +466,11 @@ public class PreferencesFrame {
                       .addComponent(okButton, buttonWidth, GroupLayout.DEFAULT_SIZE, buttonWidth) // Ok and Cancel buttton are now of size BUTTON_WIDTH
                       .addComponent(cancelButton, buttonWidth, GroupLayout.DEFAULT_SIZE, buttonWidth)
           ))
-      .addGap(BORDER)
+      .addGap(Toolkit.BORDER)
     );
 
     layout.setVerticalGroup(layout.createSequentialGroup() // sequential group for border + mainContent + border
-      .addGap(BORDER)
+      .addGap(Toolkit.BORDER)
       .addComponent(sketchbookLocationLabel)
       .addGroup(layout.createParallelGroup()
                   .addComponent(sketchbookLocationField)
@@ -452,7 +478,7 @@ public class PreferencesFrame {
       .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
                   .addComponent(languageLabel)
                   .addComponent(languageSelectionBox)
-                  .addComponent(restartProcessingLabel))
+                  .addComponent(languageRestartLabel))
       .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER).
                   addComponent(fontLabel)
                   .addComponent(fontSelectionBox))
@@ -461,6 +487,11 @@ public class PreferencesFrame {
                   .addComponent(fontSizeField)
                   .addComponent(consoleFontSizeLabel)
                   .addComponent(consoleFontSizeField))
+      .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
+                  .addComponent(zoomLabel)
+                  .addComponent(zoomAutoBox)
+                  .addComponent(zoomSelectionBox)
+                  .addComponent(zoomRestartLabel))
       .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
                   .addComponent(backgroundColorLabel)
                   .addComponent(hashLabel)
@@ -491,7 +522,7 @@ public class PreferencesFrame {
       .addGroup(layout.createParallelGroup(GroupLayout.Alignment.CENTER)
                   .addComponent(okButton)
                   .addComponent(cancelButton))
-      .addGap(BORDER)
+      .addGap(Toolkit.BORDER)
       );
 
     if (Platform.isWindows()){
@@ -635,6 +666,10 @@ public class PreferencesFrame {
       fontSizeField.setSelectedItem(Preferences.getInteger("editor.font.size"));
     }
 
+    Preferences.setBoolean("editor.zoom.auto", zoomAutoBox.isSelected());
+    Preferences.set("editor.zoom",
+                    String.valueOf(zoomSelectionBox.getSelectedItem()));
+
     try {
       Object selection = consoleFontSizeField.getSelectedItem();
       if (selection instanceof String) {
@@ -704,6 +739,19 @@ public class PreferencesFrame {
     fontSizeField.setSelectedItem(Preferences.getInteger("editor.font.size"));
     consoleFontSizeField.setSelectedItem(Preferences.getInteger("console.font.size"));
 
+    boolean zoomAuto = Preferences.getBoolean("editor.zoom.auto");
+    if (zoomAuto) {
+      zoomAutoBox.setSelected(zoomAuto);
+      zoomSelectionBox.setEnabled(!zoomAuto);
+    }
+    String zoomSel = Preferences.get("editor.zoom");
+    int zoomIndex = Toolkit.zoomOptions.index(zoomSel);
+    if (zoomIndex != -1) {
+      zoomSelectionBox.setSelectedIndex(zoomIndex);
+    } else {
+      zoomSelectionBox.setSelectedIndex(0);
+    }
+
     presentColor.setBackground(Preferences.getColor("run.present.bgcolor"));
     presentColorHex.setText(Preferences.get("run.present.bgcolor").substring(1));
 
@@ -752,7 +800,7 @@ public class PreferencesFrame {
       EventQueue.invokeLater(new Runnable() {
         @Override
         public void run() {
-          fontSelectionBox.setModel(new DefaultComboBoxModel<String>(monoFontFamilies));
+          fontSelectionBox.setModel(new DefaultComboBoxModel<>(monoFontFamilies));
           String family = Preferences.get("editor.font.family");
 
           // Set a reasonable default, in case selecting the family fails
@@ -787,7 +835,7 @@ public class PreferencesFrame {
       }
       items[i] = title;
     }
-    displaySelectionBox.setModel(new DefaultComboBoxModel<String>(items));
+    displaySelectionBox.setModel(new DefaultComboBoxModel<>(items));
 
     // Disable it if you can't actually change the default display
     displaySelectionBox.setEnabled(displayCount != 1);

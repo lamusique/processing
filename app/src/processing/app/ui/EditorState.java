@@ -3,6 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
+  Copyright (c) 2012-19 The Processing Foundation
   Copyright (c) 2011-12 Ben Fry and Casey Reas
 
   This program is free software; you can redistribute it and/or modify
@@ -158,8 +159,10 @@ public class EditorState {
    * @param editors List of editors currently opened
    */
   void defaultLocation(List<Editor> editors) {
-    int defaultWidth = Preferences.getInteger("editor.window.width.default");
-    int defaultHeight = Preferences.getInteger("editor.window.height.default");
+    int defaultWidth =
+      Toolkit.zoom(Preferences.getInteger("editor.window.width.default"));
+    int defaultHeight =
+      Toolkit.zoom(Preferences.getInteger("editor.window.height.default"));
 
     defaultWidth = Math.min(defaultWidth, deviceBounds.width);
     defaultHeight = Math.min(defaultHeight, deviceBounds.height);
@@ -217,9 +220,12 @@ public class EditorState {
 
   void apply(Editor editor) {
     editor.setBounds(editorBounds);
-    if (dividerLocation != 0) {
-      editor.setDividerLocation(dividerLocation);
+
+    if (dividerLocation == 0) {
+      dividerLocation = 2 * editor.getSize().height / 3;
     }
+    editor.setDividerLocation(dividerLocation);
+
     if (isMaximized) {
       editor.setExtendedState(Frame.MAXIMIZED_BOTH);
     }

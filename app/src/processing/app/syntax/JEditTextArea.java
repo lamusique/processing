@@ -26,7 +26,6 @@ import javax.swing.undo.*;
 import javax.swing.*;
 
 import java.awt.im.InputMethodRequests;
-import java.awt.print.Printable;
 
 import processing.app.syntax.im.InputMethodSupport;
 import processing.core.PApplet;
@@ -77,7 +76,9 @@ public class JEditTextArea extends JComponent
   /** The size of the offset between the leftmost padding and the code */
   public static final int leftHandGutter = 6;
 
-  private InputMethodSupport inputMethodSupport = null;
+  private InputMethodSupport inputMethodSupport;
+
+  private TextAreaDefaults defaults;
 
   private Brackets bracketHelper = new Brackets();
 
@@ -87,6 +88,8 @@ public class JEditTextArea extends JComponent
    * @param defaults The default settings
    */
   public JEditTextArea(TextAreaDefaults defaults, InputHandler inputHandler) {
+    this.defaults = defaults;
+
     // Enable the necessary events
     enableEvents(AWTEvent.KEY_EVENT_MASK);
 
@@ -258,8 +261,8 @@ public class JEditTextArea extends JComponent
   }
 
 
-  public final Printable getPrintable() {
-    return painter.getPrintable();
+  public TextAreaDefaults getDefaults() {
+    return defaults;
   }
 
 
@@ -591,8 +594,7 @@ public class JEditTextArea extends JComponent
   public int yToLine(int y) {
     FontMetrics fm = painter.getFontMetrics();
     int height = fm.getHeight();
-    return Math.max(0,Math.min(getLineCount() - 1,
-        y / height + firstLine));
+    return Math.max(0, Math.min(getLineCount() - 1, y / height + firstLine));
   }
 
 
@@ -617,7 +619,7 @@ public class JEditTextArea extends JComponent
    * @param offset The offset, from the start of the line
    */
   public int _offsetToX(int line, int offset) {
-    TokenMarker tokenMarker = getTokenMarker();
+    TokenMarkerState tokenMarker = getTokenMarker();
 
     // Use painter's cached info for speed
     FontMetrics fm = painter.getFontMetrics();
@@ -679,7 +681,7 @@ public class JEditTextArea extends JComponent
    * @param x The x co-ordinate
    */
   public int xToOffset(int line, int x) {
-    TokenMarker tokenMarker = getTokenMarker();
+    TokenMarkerState tokenMarker = getTokenMarker();
 
     /* Use painter's cached info for speed */
     FontMetrics fm = painter.getFontMetrics();
@@ -785,25 +787,26 @@ public class JEditTextArea extends JComponent
     }
   }
 
+
   /**
    * Converts a point to an offset, from the start of the text.
    * @param x The x co-ordinate of the point
    * @param y The y co-ordinate of the point
    */
-  public int xyToOffset(int x, int y)
-  {
+  public int xyToOffset(int x, int y) {
     int line = yToLine(y);
     int start = getLineStartOffset(line);
     return start + xToOffset(line,x);
   }
 
+
   /**
    * Returns the document this text area is editing.
    */
-  public final SyntaxDocument getDocument()
-  {
+  public final SyntaxDocument getDocument() {
     return document;
   }
+
 
   /**
    * Sets the document this text area is editing.
@@ -851,7 +854,7 @@ public class JEditTextArea extends JComponent
    * Returns the document's token marker. Equivalent to calling
    * <code>getDocument().getTokenMarker()</code>.
    */
-  public final TokenMarker getTokenMarker() {
+  public final TokenMarkerState getTokenMarker() {
     return document.getTokenMarker();
   }
 
@@ -1029,8 +1032,10 @@ public class JEditTextArea extends JComponent
     try {
       document.getText(start,len,segment);
 
-    } catch(BadLocationException bl) {
+    } catch (BadLocationException bl) {
       bl.printStackTrace();
+      System.err.format("Bad Location: %d for start %d and length %d",
+                        bl.offsetRequested(), start, len);
       segment.offset = segment.count = 0;
     }
   }
@@ -1373,14 +1378,14 @@ public class JEditTextArea extends JComponent
   /**
    * Replaces the selection with the specified text.
    * @param selectedText The replacement text for the selection
-   * @param recordCompoundEdit Whether the replacement should be 
+   * @param recordCompoundEdit Whether the replacement should be
    * recorded as a compound edit
    */
   public void setSelectedText(String selectedText, boolean recordCompoundEdit) {
     if (!editable) {
       throw new InternalError("Text component read only");
     }
-    
+
     if (recordCompoundEdit) {
       document.beginCompoundEdit();
     }
@@ -1471,7 +1476,7 @@ public class JEditTextArea extends JComponent
     // Don't overstrike if there is a selection
     if(!overwrite || selectionStart != selectionEnd)
     {
-      // record the whole operation as a compound edit if 
+      // record the whole operation as a compound edit if
       // selected text is being replaced
       boolean isSelectAndReplaceOp = (selectionStart != selectionEnd);
       setSelectedText(str, isSelectAndReplaceOp);
@@ -1576,13 +1581,14 @@ public class JEditTextArea extends JComponent
       Clipboard clipboard = getToolkit().getSystemClipboard();
 
       String selection = getSelectedText();
+      if (selection != null) {
+        int repeatCount = inputHandler.getRepeatCount();
+        StringBuilder sb = new StringBuilder();
+        for(int i = 0; i < repeatCount; i++)
+          sb.append(selection);
 
-      int repeatCount = inputHandler.getRepeatCount();
-      StringBuilder sb = new StringBuilder();
-      for(int i = 0; i < repeatCount; i++)
-        sb.append(selection);
-
-      clipboard.setContents(new StringSelection(sb.toString()), null);
+        clipboard.setContents(new StringSelection(sb.toString()), null);
+      }
     }
   }
 
@@ -1608,7 +1614,25 @@ public class JEditTextArea extends JComponent
    * specific to any language or version of the PDE.
    */
   public void copyAsHTML() {
-    StringBuilder cf = new StringBuilder("<html><body><pre>\n");
+    HtmlSelection formatted = new HtmlSelection("<html><body><pre>\n"
+        + getTextAsHtml(null) + "\n</pre></body></html>");
+
+    Clipboard clipboard = processing.app.ui.Toolkit.getSystemClipboard();
+    clipboard.setContents(formatted, new ClipboardOwner() {
+      public void lostOwnership(Clipboard clipboard, Transferable contents) {
+        // I don't care about ownership
+      }
+    });
+  }
+
+
+  /**
+   * Guts of copyAsHTML, minus the pre, body, and html blocks surrounding.
+   * @param doc If null, read only the selection if any, and use the active
+   *            document. Otherwise, the whole of doc is used.
+   */
+  public String getTextAsHtml(SyntaxDocument doc) {
+    StringBuilder cf = new StringBuilder();
 
     int selStart = getSelectionStart();
     int selStop = getSelectionStop();
@@ -1616,8 +1640,12 @@ public class JEditTextArea extends JComponent
     int startLine = getSelectionStartLine();
     int stopLine = getSelectionStopLine();
 
+    if (doc != null) {
+      startLine = 0;
+      stopLine = doc.getDefaultRootElement().getElementCount() - 1;
+    }
     // If no selection, convert all the lines
-    if (selStart == selStop) {
+    else if (selStart == selStop) {
       startLine = 0;
       stopLine = getLineCount() - 1;
     } else {
@@ -1626,55 +1654,45 @@ public class JEditTextArea extends JComponent
         stopLine--;
       }
     }
+    if (doc == null) {
+      doc = getDocument();
+    }
 
     // Read the code line by line
     for (int i = startLine; i <= stopLine; i++) {
-      emitAsHTML(cf, i);
+      emitAsHTML(cf, i, doc);
     }
 
-    cf.append("\n</pre></body></html>");
-
-    HtmlSelection formatted = new HtmlSelection(cf.toString());
-
-    Clipboard clipboard = processing.app.ui.Toolkit.getSystemClipboard();
-    clipboard.setContents(formatted, new ClipboardOwner() {
-      public void lostOwnership(Clipboard clipboard, Transferable contents) {
-        // i don't care about ownership
-      }
-    });
+    return cf.toString();
   }
 
 
-  private void emitAsHTML(StringBuilder cf, int line) {
+  private void emitAsHTML(StringBuilder cf, int line, SyntaxDocument doc) {
+    // Almost static; only needs the painter for a color scheme.
     Segment segment = new Segment();
-    getLineText(line, segment);
+    try {
+      Element element = doc.getDefaultRootElement().getElement(line);
+      int start = element.getStartOffset();
+      int stop  = element.getEndOffset();
+      doc.getText(start, stop - start - 1, segment);
+    } catch (BadLocationException e) { return; }
 
     char[] segmentArray = segment.array;
     int limit = segment.getEndIndex();
     int segmentOffset = segment.offset;
     int segmentCount = segment.count;
 
-    TokenMarker tokenMarker = getTokenMarker();
+    TokenMarkerState tokenMarker = doc.getTokenMarker();
     // If syntax coloring is disabled, do simple translation
     if (tokenMarker == null) {
       for (int j = 0; j < segmentCount; j++) {
         char c = segmentArray[j + segmentOffset];
-        //cf = cf.append(c);
         appendAsHTML(cf, c);
       }
     } else {
       // If syntax coloring is enabled, we have to do this
       // because tokens can vary in width
-      Token tokens;
-      if ((painter.getCurrentLineIndex() == line) &&
-          (painter.getCurrentLineTokens() != null)) {
-        tokens = painter.getCurrentLineTokens();
-
-      } else {
-        painter.setCurrentLineIndex(line);
-        painter.setCurrentLineTokens(tokenMarker.markTokens(segment, line));
-        tokens = painter.getCurrentLineTokens();
-      }
+      Token tokens = tokenMarker.markTokens(segment, line);
 
       int offset = 0;
       SyntaxStyle[] styles = painter.getStyles();
@@ -1682,10 +1700,8 @@ public class JEditTextArea extends JComponent
       for (;;) {
         byte id = tokens.id;
         if (id == Token.END) {
-          char c = segmentArray[segmentOffset + offset];
           if (segmentOffset + offset < limit) {
-            //cf.append(c);
-            appendAsHTML(cf, c);
+            appendAsHTML(cf, segmentArray[segmentOffset + offset]);
           } else {
             cf.append('\n');
           }
@@ -1708,7 +1724,6 @@ public class JEditTextArea extends JComponent
             cf.append("&nbsp;");
           } else {
             appendAsHTML(cf, c);
-            //cf.append(c);
           }
           // Place close tags [/]
           if (j == (length - 1) && id != Token.NULL && styles[id].isBold())

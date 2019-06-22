@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2012-15 The Processing Foundation
+  Copyright (c) 2012-19 The Processing Foundation
   Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
@@ -30,6 +30,7 @@ import processing.app.Messages;
 import processing.app.Mode;
 import processing.app.Platform;
 import processing.app.Preferences;
+import processing.app.Problem;
 import processing.app.RunnerListener;
 import processing.app.Sketch;
 import processing.app.SketchCode;
@@ -55,15 +56,18 @@ import java.awt.print.*;
 import java.io.*;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Stack;
 import java.util.Timer;
 import java.util.TimerTask;
+import java.util.stream.Collectors;
 
 import javax.swing.*;
 import javax.swing.event.*;
 import javax.swing.plaf.basic.*;
 import javax.swing.text.*;
+import javax.swing.text.html.*;
 import javax.swing.undo.*;
 
 
@@ -75,10 +79,11 @@ public abstract class Editor extends JFrame implements RunnerListener {
   protected EditorState state;
   protected Mode mode;
 
-  static public final int LEFT_GUTTER = 44;
-  static public final int RIGHT_GUTTER = 12;
-  static public final int GUTTER_MARGIN = 3;
+  static public final int LEFT_GUTTER = Toolkit.zoom(44);
+  static public final int RIGHT_GUTTER = Toolkit.zoom(12);
+  static public final int GUTTER_MARGIN = Toolkit.zoom(3);
 
+  protected MarkerColumn errorColumn;
 
   // Otherwise, if the window is resized with the message label
   // set to blank, its preferredSize() will be fuckered
@@ -126,7 +131,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
   protected CopyAsHtmlAction copyAsHtmlAction;
   protected PasteAction pasteAction;
   /** Menu Actions updated on the opening of the edit menu. */
-  protected List<UpdatableAction> editMenuUpdatable = new ArrayList<UpdatableAction>();
+  protected List<UpdatableAction> editMenuUpdatable = new ArrayList<>();
 
   /** The currently selected tab's undo manager */
   private UndoManager undo;
@@ -139,14 +144,16 @@ public abstract class Editor extends JFrame implements RunnerListener {
   // true if inserting text, false if removing text
   private boolean isInserting;
   // maintain caret position during undo operations
-  private final Stack<Integer> caretUndoStack = new Stack<Integer>();
-  private final Stack<Integer> caretRedoStack = new Stack<Integer>();
+  private final Stack<Integer> caretUndoStack = new Stack<>();
+  private final Stack<Integer> caretRedoStack = new Stack<>();
 
   private FindReplace find;
   JMenu toolsMenu;
   JMenu modePopup;
 
   Image backgroundGradient;
+
+  protected List<Problem> problems = Collections.emptyList();
 
 
   protected Editor(final Base base, String path, final EditorState state,
@@ -175,25 +182,21 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     // When bringing a window to front, let the Base know
     addWindowListener(new WindowAdapter() {
-//      int importIndex;
 
         public void windowActivated(WindowEvent e) {
           base.handleActivated(Editor.this);
           fileMenu.insert(Recent.getMenu(), 2);
           Toolkit.setMenuMnemsInside(fileMenu);
 
-          //sketchMenu.insert(mode.getImportMenu(), 5);
           mode.insertImportMenu(sketchMenu);
-          //sketchMenu.insert(mode.getImportMenu(), importIndex);
           Toolkit.setMenuMnemsInside(sketchMenu);
           mode.insertToolbarRecentMenu();
         }
 
         public void windowDeactivated(WindowEvent e) {
+          // TODO call handleActivated(null)? or do we run the risk of the
+          // deactivate call for old window being called after the activate?
           fileMenu.remove(Recent.getMenu());
-//          JMenu importMenu = mode.getImportMenu();
-//          importIndex = sketchMenu.getComponentZOrder(mode.getImportMenu());
-//          sketchMenu.remove(mode.getImportMenu());
           mode.removeImportMenu(sketchMenu);
           mode.removeToolbarRecentMenu();
         }
@@ -260,9 +263,10 @@ public abstract class Editor extends JFrame implements RunnerListener {
     textarea.setRightClickPopup(new TextAreaPopup());
     textarea.setHorizontalOffset(JEditTextArea.leftHandGutter);
 
-    { // Hack: add Numpad Slash as an alternative shortcut for Comment/Uncomment
+    { // Hack: add Numpad Slash as alternative shortcut for Comment/Uncomment
       int modifiers = Toolkit.awtToolkit.getMenuShortcutKeyMask();
-      KeyStroke keyStroke = KeyStroke.getKeyStroke(KeyEvent.VK_DIVIDE, modifiers);
+      KeyStroke keyStroke =
+        KeyStroke.getKeyStroke(KeyEvent.VK_DIVIDE, modifiers);
       final String ACTION_KEY = "COMMENT_UNCOMMENT_ALT";
       textarea.getInputMap().put(keyStroke, ACTION_KEY);
       textarea.getActionMap().put(ACTION_KEY, new AbstractAction() {
@@ -272,14 +276,31 @@ public abstract class Editor extends JFrame implements RunnerListener {
         }
       });
     }
+    textarea.addCaretListener(new CaretListener() {
+      public void caretUpdate(CaretEvent e) {
+        updateEditorStatus();
+      }
+    });
 
     footer = createFooter();
 
-    upper.add(textarea);
+    // build the central panel with the text area & error marker column
+    JPanel editorPanel = new JPanel(new BorderLayout());
+    errorColumn =  new MarkerColumn(this, textarea.getMinimumSize().height);
+    editorPanel.add(errorColumn, BorderLayout.EAST);
+    textarea.setBounds(0, 0, errorColumn.getX() - 1, textarea.getHeight());
+    editorPanel.add(textarea);
+    upper.add(editorPanel);
+
+    // set colors and fonts for the painter object
+    PdeTextArea pta = getPdeTextArea();
+    if (pta != null) {
+      pta.setMode(mode);
+    }
 
     splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, upper, footer);
 
-    // disable this because it hides the message area, which is essential (issue #745)
+    // disable this because it hides the message area (Google Code issue #745)
     splitPane.setOneTouchExpandable(false);
     // repaint child panes while resizing
     splitPane.setContinuousLayout(true);
@@ -298,6 +319,17 @@ public abstract class Editor extends JFrame implements RunnerListener {
       public BasicSplitPaneDivider createDefaultDivider() {
         status = new EditorStatus(this, Editor.this);
         return status;
+      }
+
+
+      @Override
+      public void finishDraggingTo(int location) {
+        super.finishDraggingTo(location);
+        // JSplitPane issue: if you only make the lower component visible at
+        // the last minute, its minmum size is ignored.
+        if (location > splitPane.getMaximumDividerLocation()) {
+          splitPane.setDividerLocation(splitPane.getMaximumDividerLocation());
+        }
       }
     });
 
@@ -321,15 +353,17 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     contentPain.setTransferHandler(new FileDropHandler());
 
-    // Finish preparing Editor (formerly found in Base)
+    // Finish preparing Editor
     pack();
 
     // Set the window bounds and the divider location before setting it visible
     state.apply(this);
 
     // Set the minimum size for the editor window
-    int minWidth = Preferences.getInteger("editor.window.width.min");
-    int minHeight = Preferences.getInteger("editor.window.height.min");
+    int minWidth =
+      Toolkit.zoom(Preferences.getInteger("editor.window.width.min"));
+    int minHeight =
+      Toolkit.zoom(Preferences.getInteger("editor.window.height.min"));
     setMinimumSize(new Dimension(minWidth, minHeight));
 
     // Bring back the general options for the editor
@@ -389,7 +423,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
   protected JEditTextArea createTextArea() {
     return new JEditTextArea(new PdeTextAreaDefaults(mode),
-                             new PdeInputHandler());
+                             new PdeInputHandler(this));
   }
 
 
@@ -847,13 +881,8 @@ public abstract class Editor extends JFrame implements RunnerListener {
     undoItem = Toolkit.newJMenuItem(undoAction = new UndoAction(), 'Z');
     menu.add(undoItem);
 
-    // Gotta follow them interface guidelines
-    // http://code.google.com/p/processing/issues/detail?id=363
-    if (Platform.isWindows()) {
-      redoItem = Toolkit.newJMenuItem(redoAction = new RedoAction(), 'Y');
-    } else {  // Linux and OS X
-      redoItem = Toolkit.newJMenuItemShift(redoAction = new RedoAction(), 'Z');
-    }
+    redoItem = new JMenuItem(redoAction = new RedoAction());
+    redoItem.setAccelerator(Toolkit.getKeyStrokeExt("menu.edit.redo"));
     menu.add(redoItem);
 
     menu.addSeparator();
@@ -922,7 +951,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     });
     menu.add(item);
 
-    item = Toolkit.newJMenuItem(Language.text("menu.edit.comment_uncomment"), '/');
+    item = Toolkit.newJMenuItemExt("menu.edit.comment_uncomment");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleCommentUncomment();
@@ -930,7 +959,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     });
     menu.add(item);
 
-    item = Toolkit.newJMenuItem("\u2192 "+Language.text("menu.edit.increase_indent"), ']');
+    item = Toolkit.newJMenuItemExt("menu.edit.increase_indent");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleIndentOutdent(true);
@@ -938,7 +967,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     });
     menu.add(item);
 
-    item = Toolkit.newJMenuItem("\u2190 "+Language.text("menu.edit.decrease_indent"), '[');
+    item = Toolkit.newJMenuItemExt("menu.edit.decrease_indent");
     item.addActionListener(new ActionListener() {
         public void actionPerformed(ActionEvent e) {
           handleIndentOutdent(false);
@@ -1046,7 +1075,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     sketchMenu.addMenuListener(new MenuListener() {
       // Menu Listener that populates the menu only when the menu is opened
-      List<JMenuItem> menuList = new ArrayList<JMenuItem>();
+      List<JMenuItem> menuList = new ArrayList<>();
 
       @Override
       public void menuSelected(MenuEvent event) {
@@ -1101,6 +1130,8 @@ public abstract class Editor extends JFrame implements RunnerListener {
   public void librariesChanged() { }
 
   public void codeFolderChanged() { }
+
+  public void sketchChanged() { }
 
 
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -1371,10 +1402,13 @@ public abstract class Editor extends JFrame implements RunnerListener {
       redoAction.updateRedoState();
       if (sketch != null) {
         sketch.setModified(!getText().equals(sketch.getCurrentCode().getSavedProgram()));
+        // Go through all tabs; Replace All, Rename or Undo could have changed them
         for (SketchCode sc : sketch.getCode()) {
-          try {
-            sc.setModified(!sc.getDocumentText().equals(sc.getSavedProgram()));
-          } catch (BadLocationException ignore) { }
+          if (sc.getDocument() != null) {
+            try {
+              sc.setModified(!sc.getDocumentText().equals(sc.getSavedProgram()));
+            } catch (BadLocationException ignore) { }
+          }
         }
         repaintHeader();
       }
@@ -1433,10 +1467,14 @@ public abstract class Editor extends JFrame implements RunnerListener {
       undoAction.updateUndoState();
       if (sketch != null) {
         sketch.setModified(!getText().equals(sketch.getCurrentCode().getSavedProgram()));
+        // Go through all tabs; Replace All, Rename or Undo could have changed them
         for (SketchCode sc : sketch.getCode()) {
-          try {
-            sc.setModified(!sc.getDocumentText().equals(sc.getSavedProgram()));
-          } catch (BadLocationException ignore) { }
+          if (sc.getDocument() != null) {
+            try {
+              sc.setModified(!sc.getDocumentText().equals(sc.getSavedProgram()));
+            } catch (BadLocationException ignore) {
+            }
+          }
         }
         repaintHeader();
       }
@@ -1562,6 +1600,11 @@ public abstract class Editor extends JFrame implements RunnerListener {
    */
   public JEditTextArea getTextArea() {
     return textarea;
+  }
+
+
+  public PdeTextArea getPdeTextArea() {
+    return (textarea instanceof PdeTextArea) ? (PdeTextArea) textarea : null;
   }
 
 
@@ -1763,7 +1806,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
             startCompoundEdit();
           super.beginCompoundEdit();
         }
-        
+
         @Override
         public void endCompoundEdit() {
           stopCompoundEdit();
@@ -1773,7 +1816,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
       code.setDocument(document);
 
       // turn on syntax highlighting
-      document.setTokenMarker(mode.getTokenMarker());
+      document.setTokenMarker(mode.getTokenMarker(code));
 
       // insert the program text into the document object
       try {
@@ -1798,7 +1841,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
           if (!isInserting && !textarea.isOverwriteEnabled() && isDirectEdit()) {
             endTextEditHistory();
           }
-          
+
           if (!textarea.isOverwriteEnabled()) {
             isInserting = true;
           }
@@ -2099,12 +2142,25 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     // log("Commented: " + commented);
 
-    // This is the line start offset of the first line, which is added to
-    // all other lines while adding a comment. Required when commenting
+    // This is the min line start offset of the selection, which is added to
+    // all lines while adding a comment. Required when commenting
     // lines which have uneven whitespaces in the beginning. Makes the
     // commented lines look more uniform.
     int lso = Math.abs(textarea.getLineStartNonWhiteSpaceOffset(startLine)
         - textarea.getLineStartOffset(startLine));
+
+    if (!commented) {
+      // get min line start offset of all selected lines
+      for (int line = startLine+1; line <= stopLine; line++) {
+        String lineText = textarea.getLineText(line);
+        if (lineText.trim().length() == 0) {
+          continue; //ignore blank lines
+        }
+        int so = Math.abs(textarea.getLineStartNonWhiteSpaceOffset(line)
+                              - textarea.getLineStartOffset(line));
+        lso = Math.min(lso, so);
+      }
+    }
 
     for (int line = startLine; line <= stopLine; line++) {
       int location = textarea.getLineStartNonWhiteSpaceOffset(line);
@@ -2172,7 +2228,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
         int last = Math.min(location + tabSize, textarea.getDocumentLength());
         textarea.select(location, last);
         // Don't eat code if it's not indented
-        if (textarea.getSelectedText().equals(tabString)) {
+        if (tabString.equals(textarea.getSelectedText())) {
           textarea.setSelectedText("");
         }
       }
@@ -2271,11 +2327,11 @@ public abstract class Editor extends JFrame implements RunnerListener {
     if (ref != null) {
       showReference(ref + ".html");
     } else {
-      String text = textarea.getSelectedText().trim();
-      if (text.length() == 0) {
+      String text = textarea.getSelectedText();
+      if (text == null) {
         statusNotice(Language.text("editor.status.find_reference.select_word_first"));
       } else {
-        statusNotice(Language.interpolate("editor.status.find_reference.not_available", text));
+        statusNotice(Language.interpolate("editor.status.find_reference.not_available", text.trim()));
       }
     }
   }
@@ -2351,6 +2407,14 @@ public abstract class Editor extends JFrame implements RunnerListener {
 //  }
 
 
+  public boolean isDebuggerEnabled() {
+    return false;
+  }
+
+
+  public void toggleBreakpoint(int lineIndex) { }
+
+
   /**
    * Check if the sketch is modified and ask user to save changes.
    * @return false if canceling the close/quit operation
@@ -2409,7 +2473,9 @@ public abstract class Editor extends JFrame implements RunnerListener {
                         JOptionPane.QUESTION_MESSAGE);
 
       String[] options = new String[] {
-        Language.text("save.btn.save"), Language.text("prompt.cancel"), Language.text("save.btn.dont_save")
+        Language.text("save.btn.save"),
+        Language.text("prompt.cancel"),
+        Language.text("save.btn.dont_save")
       };
       pane.setOptions(options);
 
@@ -2419,7 +2485,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
       // on macosx, setting the destructive property places this option
       // away from the others at the lefthand side
       pane.putClientProperty("Quaqua.OptionPane.destructiveOption",
-                             new Integer(2));
+                             Integer.valueOf(2));
 
       JDialog dialog = pane.createDialog(this, null);
       dialog.setVisible(true);
@@ -2532,6 +2598,7 @@ public abstract class Editor extends JFrame implements RunnerListener {
     // TODO this probably need not be here because of the Recent menu, right?
     Preferences.save();
   }
+
 
   /**
    * Set the title of the PDE window based on the current sketch, i.e.
@@ -2667,15 +2734,51 @@ public abstract class Editor extends JFrame implements RunnerListener {
    */
   public void handlePrint() {
     statusNotice(Language.text("editor.status.printing"));
+
+    StringBuilder html = new StringBuilder("<html><body>");
+    for (SketchCode tab : sketch.getCode()) {
+      html.append("<b>" + tab.getPrettyName() + "</b><br>");
+      html.append(textarea.getTextAsHtml((SyntaxDocument)tab.getDocument()));
+      html.append("<br>");
+    }
+    html.setLength(html.length() - 4); // Don't want last <br>.
+    html.append("</body></html>");
+    JTextPane jtp = new JTextPane();
+    // Needed for good line wrapping; otherwise one very long word breaks
+    // wrapping for the whole document.
+    jtp.setEditorKit(new HTMLEditorKit() {
+      public ViewFactory getViewFactory() {
+        return new HTMLFactory() {
+          public View create(Element e) {
+            View v = super.create(e);
+            if (!(v instanceof javax.swing.text.html.ParagraphView))
+              return v;
+            else
+              return new javax.swing.text.html.ParagraphView(e) {
+                protected SizeRequirements calculateMinorAxisRequirements(
+                    int axis, SizeRequirements r) {
+                  r = super.calculateMinorAxisRequirements(axis, r);
+                  r.minimum = 1;
+                  return r;
+                }
+              };
+          }
+        };
+      }
+    });
+    jtp.setFont(new Font(Preferences.get("editor.font.family"), Font.PLAIN, 10));
+    jtp.setText(html.toString().replace("\n", "<br>") // Not in a <pre>.
+        .replaceAll("(?<!&nbsp;)&nbsp;", " "));       // Allow line wrap.
+
     //printerJob = null;
     if (printerJob == null) {
       printerJob = PrinterJob.getPrinterJob();
     }
     if (pageFormat != null) {
       //System.out.println("setting page format " + pageFormat);
-      printerJob.setPrintable(textarea.getPrintable(), pageFormat);
+      printerJob.setPrintable(jtp.getPrintable(null, null), pageFormat);
     } else {
-      printerJob.setPrintable(textarea.getPrintable());
+      printerJob.setPrintable(jtp.getPrintable(null, null));
     }
     // set the name of the job to the code name
     printerJob.setJobName(sketch.getCurrentCode().getPrettyName());
@@ -2699,6 +2802,8 @@ public abstract class Editor extends JFrame implements RunnerListener {
   /**
    * Grab current contents of the sketch window, advance the console,
    * stop any other running sketches... not in that order.
+   * It's essential that this function be called by any Mode subclass,
+   * otherwise current edits may not be stored for getProgram().
    */
   public void prepareRun() {
     internalCloseRunner();
@@ -2717,10 +2822,14 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     // make sure any edits have been stored
     //current.setProgram(editor.getText());
+    // Go through all tabs; Replace All, Rename or Undo could have changed them
     for (SketchCode sc : sketch.getCode()) {
-      try {
-        sc.setProgram(sc.getDocumentText());
-      } catch (BadLocationException e) { }
+      if (sc.getDocument() != null) {
+        try {
+          sc.setProgram(sc.getDocumentText());
+        } catch (BadLocationException e) {
+        }
+      }
     }
 
 //    // if an external editor is being used, need to grab the
@@ -2753,11 +2862,23 @@ public abstract class Editor extends JFrame implements RunnerListener {
    * Called by ErrorTable when a row is selected. Action taken is specific
    * to each Mode, based on the object passed in.
    */
-  public void errorTableClick(Object item) { }
+  public void errorTableClick(Object item) {
+    highlight((Problem) item);
+  }
 
 
   public void errorTableDoubleClick(Object item) { }
 
+
+  /**
+   * Handle whether the tiny red error indicator is shown near
+   * the error button at the bottom of the PDE
+   */
+  public void updateErrorToggle(boolean hasErrors) {
+    if (errorTable != null) {
+      footer.setNotification(errorTable.getParent(), hasErrors);
+    }
+  }
 
 
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
@@ -2785,6 +2906,17 @@ public abstract class Editor extends JFrame implements RunnerListener {
 
     if (e instanceof SketchException) {
       SketchException re = (SketchException) e;
+
+      // Make sure something is printed into the console
+      // Status bar is volatile
+      if (!re.isStackTraceEnabled()) {
+        System.err.println(re.getMessage());
+      }
+
+      // Move the cursor to the line before updating the status bar, otherwise
+      // status message might get hidden by a potential message caused by moving
+      // the cursor to a line with warning in it
+
       if (re.hasCodeIndex()) {
         sketch.setCurrentCode(re.getCodeIndex());
       }
@@ -2890,6 +3022,15 @@ public abstract class Editor extends JFrame implements RunnerListener {
   }
 
 
+  public void statusMessage(String message, int type) {
+    if (EventQueue.isDispatchThread()) {
+      status.message(message, type);
+    } else {
+      EventQueue.invokeLater(() -> statusMessage(message, type));
+    }
+  }
+
+
   public void startIndeterminate() {
     status.startIndeterminate();
   }
@@ -2913,40 +3054,151 @@ public abstract class Editor extends JFrame implements RunnerListener {
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
 
+  public void setProblemList(List<Problem> problems) {
+    this.problems = problems;
+    boolean hasErrors = problems.stream().anyMatch(Problem::isError);
+    updateErrorTable(problems);
+    errorColumn.updateErrorPoints(problems);
+    textarea.repaint();
+    updateErrorToggle(hasErrors);
+    updateEditorStatus();
+  }
+
+
+  /**
+   * Updates the error table in the Error Window.
+   */
+  public void updateErrorTable(List<Problem> problems) {
+    if (errorTable != null) {
+      errorTable.clearRows();
+
+      for (Problem p : problems) {
+        String message = p.getMessage();
+        errorTable.addRow(p, message,
+                          sketch.getCode(p.getTabIndex()).getPrettyName(),
+                          Integer.toString(p.getLineNumber() + 1));
+        // Added +1 because lineNumbers internally are 0-indexed
+      }
+    }
+  }
+
+
+    public void highlight(Problem p) {
+    if (p != null) {
+      highlight(p.getTabIndex(), p.getStartOffset(), p.getStartOffset());
+    }
+  }
+
+
+  public void highlight(int tabIndex, int startOffset, int stopOffset) {
+    // Switch to tab
+    toFront();
+    sketch.setCurrentCode(tabIndex);
+
+    // Make sure offsets are in bounds
+    int length = textarea.getDocumentLength();
+    startOffset = PApplet.constrain(startOffset, 0, length);
+    stopOffset = PApplet.constrain(stopOffset, 0, length);
+
+    // Highlight the code
+    textarea.select(startOffset, stopOffset);
+
+    // Scroll to error line
+    textarea.scrollToCaret();
+    repaint();
+  }
+
+
+  public List<Problem> getProblems() {
+    return problems;
+  }
+
+
+  /**
+   * Updates editor status bar, depending on whether the caret is on an error
+   * line or not
+   */
+  public void updateEditorStatus() {
+    Problem problem = findProblem(textarea.getCaretLine());
+    if (problem != null) {
+      int type = problem.isError() ?
+        EditorStatus.CURSOR_LINE_ERROR : EditorStatus.CURSOR_LINE_WARNING;
+      statusMessage(problem.getMessage(), type);
+    } else {
+      switch (getStatusMode()) {
+        case EditorStatus.CURSOR_LINE_ERROR:
+        case EditorStatus.CURSOR_LINE_WARNING:
+          statusEmpty();
+          break;
+      }
+    }
+  }
+
+
+  /**
+   * @return the Problem for the most relevant error or warning on 'line',
+   *         defaults to the first error, if there are no errors first warning.
+   */
+  protected Problem findProblem(int line) {
+    List<Problem> problems = findProblems(line);
+    for (Problem p : problems) {
+      if (p.isError()) return p;
+    }
+    return problems.isEmpty() ? null : problems.get(0);
+  }
+
+
+  public List<Problem> findProblems(int line) {
+    int currentTab = getSketch().getCurrentCodeIndex();
+    return problems.stream()
+        .filter(p -> p.getTabIndex() == currentTab)
+        .filter(p -> {
+          int pStartLine = p.getLineNumber();
+          int pEndOffset = p.getStopOffset();
+          int pEndLine = textarea.getLineOfOffset(pEndOffset);
+          return line >= pStartLine && line <= pEndLine;
+        })
+        .collect(Collectors.toList());
+  }
+
+
+  public void repaintErrorBar() {
+    errorColumn.repaint();
+  }
+
+
+  public void showConsole() {
+    footer.setPanel(console);
+  }
+
+
+  // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+
+
   static Font font;
   static Color textColor;
   static Color bgColorWarning;
   static Color bgColorError;
 
 
-  /*
-  public void toolTipError(JComponent comp, String message) {
-    setToolTip(comp, message, true);
-  }
-
-
-  public void toolTipWarning(JComponent comp, String message) {
-    setToolTip(comp, message, false);
-  }
-  */
-
-
   public void statusToolTip(JComponent comp, String message, boolean error) {
     if (font == null) {
-      font = Toolkit.getSansFont(9, Font.PLAIN);
+      font = Toolkit.getSansFont(Toolkit.zoom(9), Font.PLAIN);
       textColor = mode.getColor("errors.selection.fgcolor");
       bgColorWarning = mode.getColor("errors.selection.warning.bgcolor");
       bgColorError = mode.getColor("errors.selection.error.bgcolor");
     }
 
-    Color bgColor = error ? //text.startsWith(Language.text("editor.status.error")) ?
-      bgColorError : bgColorWarning;
-    String content = "<html>" +
-      "<div style='margin: -3 -3 -3 -3; padding: 3 3 3 3; " +
+    Color bgColor = error ? bgColorError : bgColorWarning;
+    int m = Toolkit.zoom(3);
+    String css =
+      String.format("margin: %d %d %d %d; ", -m, -m, -m, -m) +
+      String.format("padding: %d %d %d %d; ", m, m, m, m) +
       "background: #" + PApplet.hex(bgColor.getRGB(), 8).substring(2) + ";" +
       "font-family: " + font.getFontName() + ", sans-serif;" +
-      "font-size: " + font.getSize() + "px;'>" + message + "</div></html>";
-    //System.out.println(content);
+      "font-size: " + font.getSize() + "px;";
+    String content =
+      "<html> <div style='" + css + "'>" + message + "</div> </html>";
     comp.setToolTipText(content);
   }
 

@@ -3,7 +3,7 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyirght (c) 2012-15 The Processing Foundation
+  Copyirght (c) 2012-19 The Processing Foundation
   Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
@@ -52,11 +52,11 @@ import processing.app.Mode;
 abstract public class EditorToolbar extends JPanel implements KeyListener {
   // haven't decided how to handle this/how to make public/consistency
   // for components/does it live in theme.txt
-  static final int HIGH = 53;
+  static final int HIGH = Toolkit.zoom(53);
   // horizontal gap between buttons
-  static final int GAP = 9;
+  static final int GAP = Toolkit.zoom(9);
   // corner radius on the mode selector
-  static final int RADIUS = 3;
+  static final int RADIUS = Toolkit.zoom(3);
 
   protected Editor editor;
   protected Base base;
@@ -78,8 +78,7 @@ abstract public class EditorToolbar extends JPanel implements KeyListener {
     base = editor.getBase();
     mode = editor.getMode();
 
-    gradient = mode.makeGradient("toolbar", 400, HIGH);
-//    reverseGradient = mode.getGradient("reversed", 100, EditorButton.DIM);
+    gradient = mode.makeGradient("toolbar", Toolkit.zoom(400), HIGH);
 
     rebuild();
   }
@@ -286,11 +285,11 @@ abstract public class EditorToolbar extends JPanel implements KeyListener {
     int titleAscent;
     int titleWidth;
 
-    final int MODE_GAP_WIDTH = 13;
-    final int ARROW_GAP_WIDTH = 6;
-    final int ARROW_WIDTH = 6;
-    final int ARROW_TOP = 12;
-    final int ARROW_BOTTOM = 18;
+    final int MODE_GAP_WIDTH = Toolkit.zoom(13);
+    final int ARROW_GAP_WIDTH = Toolkit.zoom(6);
+    final int ARROW_WIDTH = Toolkit.zoom(6);
+    final int ARROW_TOP = Toolkit.zoom(12);
+    final int ARROW_BOTTOM = Toolkit.zoom(18);
 
     int[] triangleX = new int[3];
     int[] triangleY = new int[] { ARROW_TOP, ARROW_TOP, ARROW_BOTTOM };
@@ -328,11 +327,7 @@ abstract public class EditorToolbar extends JPanel implements KeyListener {
       Dimension size = getSize();
       width = 0;
       if (width != size.width || height != size.height) {
-        if (Toolkit.highResDisplay()) {
-          offscreen = createImage(size.width*2, size.height*2);
-        } else {
-          offscreen = createImage(size.width, size.height);
-        }
+        offscreen = Toolkit.offscreenGraphics(this, size.width, size.height);
         width = size.width;
         height = size.height;
       }
@@ -357,6 +352,7 @@ abstract public class EditorToolbar extends JPanel implements KeyListener {
 
       // draw the outline for this feller
       g.setColor(outlineColor);
+      //Toolkit.dpiStroke(g2);
       g2.draw(Toolkit.createRoundRect(1, 1, width-1, height-1,
                                       RADIUS, RADIUS, RADIUS, RADIUS));
 

@@ -5,8 +5,8 @@ import org.eclipse.jdt.core.dom.CompilationUnit;
 import org.eclipse.jdt.core.dom.MethodDeclaration;
 import org.eclipse.jdt.core.dom.NumberLiteral;
 import org.eclipse.jdt.core.dom.SimpleType;
-import org.eclipse.jdt.core.dom.TypeDeclaration;
 
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
@@ -55,8 +55,12 @@ public class SourceUtils {
 
 
 
+  // Positive lookahead and lookbehind are needed to match all type constructors
+  // in code like `int(byte(245))` where first bracket matches as last
+  // group in "^int(" but also as a first group in "(byte(". Lookahead and
+  // lookbehind won't consume the shared character.
   public static final Pattern TYPE_CONSTRUCTOR_REGEX =
-      Pattern.compile("(?:^|\\W)(int|char|float|boolean|byte)(?:\\s*\\()",
+      Pattern.compile("(?<=^|\\W)(int|char|float|boolean|byte)(?=\\s*\\()",
                       Pattern.MULTILINE);
 
   public static List<Edit> replaceTypeConstructors(CharSequence source) {
@@ -80,7 +84,7 @@ public class SourceUtils {
 
 
   public static final Pattern HEX_LITERAL_REGEX =
-      Pattern.compile("(?:^|\\W)(#[A-Fa-f0-9]{6})(?:\\W|$)");
+      Pattern.compile("(?<=^|\\W)(#[A-Fa-f0-9]{6})(?=\\W|$)");
 
   public static List<Edit> replaceHexLiterals(CharSequence source) {
     // Find all #[webcolor] and replace with 0xff[webcolor]
@@ -141,25 +145,6 @@ public class SourceUtils {
   }
 
 
-  public static List<Edit> addPublicToTopLevelMethods(CompilationUnit cu) {
-    List<Edit> edits = new ArrayList<>();
-
-    // Add public modifier to top level methods
-    for (Object node : cu.types()) {
-      if (node instanceof TypeDeclaration) {
-        TypeDeclaration type = (TypeDeclaration) node;
-        for (MethodDeclaration method : type.getMethods()) {
-          if (method.modifiers().isEmpty() && !method.isConstructor()) {
-            edits.add(Edit.insert(method.getStartPosition(), "public "));
-          }
-        }
-      }
-    }
-
-    return edits;
-  }
-
-
   // Verifies that whole input String is floating point literal. Can't be used for searching.
   // https://docs.oracle.com/javase/specs/jls/se8/html/jls-3.html#jls-DecimalFloatingPointLiteral
   public static final Pattern FLOATING_POINT_LITERAL_VERIFIER;
@@ -173,13 +158,18 @@ public class SourceUtils {
             "(?:^" + DIGITS + EXPONENT_PART + "?[fFdD]$)");
   }
 
-  public static List<Edit> replaceColorAndFixFloats(CompilationUnit cu) {
+  // Mask to quickly resolve whether there are any access modifiers present
+  private static final int ACCESS_MODIFIERS_MASK =
+      Modifier.PUBLIC | Modifier.PRIVATE | Modifier.PROTECTED;
+
+  public static List<Edit> preprocessAST(CompilationUnit cu) {
     final List<Edit> edits = new ArrayList<>();
 
-    // Walk the tree, replace "color" with "int" and add 'f' to floats
+    // Walk the tree
     cu.accept(new ASTVisitor() {
       @Override
       public boolean visit(SimpleType node) {
+        // replace "color" with "int"
         if ("color".equals(node.getName().toString())) {
           edits.add(Edit.replace(node.getStartPosition(), node.getLength(), "int"));
         }
@@ -188,9 +178,20 @@ public class SourceUtils {
 
       @Override
       public boolean visit(NumberLiteral node) {
+        // add 'f' to floats
         String s = node.getToken().toLowerCase();
         if (FLOATING_POINT_LITERAL_VERIFIER.matcher(s).matches() && !s.endsWith("f") && !s.endsWith("d")) {
           edits.add(Edit.insert(node.getStartPosition() + node.getLength(), "f"));
+        }
+        return super.visit(node);
+      }
+
+      @Override
+      public boolean visit(MethodDeclaration node) {
+        // add 'public' to methods with default visibility
+        int accessModifiers = node.getModifiers() & ACCESS_MODIFIERS_MASK;
+        if (accessModifiers == 0) {
+          edits.add(Edit.insert(node.getStartPosition(), "public "));
         }
         return super.visit(node);
       }
@@ -265,6 +266,14 @@ public class SourceUtils {
     for (int i = 0; i <= length; i++) {
       char ch = (i < length) ? p.charAt(i) : 0;
       char pch = (i == 0) ? 0 : p.charAt(i-1);
+      // Get rid of double backslash immediately, otherwise
+      // the second backslash incorrectly triggers a new escape sequence
+      if (pch == '\\' && ch == '\\') {
+        p.setCharAt(i-1, ' ');
+        p.setCharAt(i, ' ');
+        pch = ' ';
+        ch = ' ';
+      }
       switch (state) {
         case OUT:
           switch (ch) {
@@ -275,7 +284,7 @@ public class SourceUtils {
           }
           break;
         case IN_BLOCK_COMMENT:
-          if (pch == '*' && ch == '/' && (i - blockStart) > 1) {
+          if (pch == '*' && ch == '/' && (i - blockStart) > 0) {
             state = OUT;
           }
           break;
@@ -322,4 +331,41 @@ public class SourceUtils {
 
   }
 
+
+  // TODO: move this to a better place when JavaBuild starts using JDT and we
+  //       don't need to check errors at two different places [jv 2017-09-19]
+  /**
+   * Checks a single code fragment (such as a tab) for non-matching braces.
+   * Broken out to allow easy use in JavaBuild.
+   * @param c Program code scrubbed of comments and string literals.
+   * @param start Start index, inclusive.
+   * @param end End index, exclusive.
+   * @return {@code int[4]} Depth at which the loop stopped, followed by the
+   *         line number, column, and string index (within the range) at which
+   *         an error was found, if any.
+   */
+  static public int[] checkForMissingBraces(CharSequence c, int start, int end) {
+    int depth = 0;
+    int lineNumber = 0;
+    int lineStart = start;
+    for (int i = start; i < end; i++) {
+      char ch = c.charAt(i);
+      switch (ch) {
+        case '{':
+          depth++;
+          break;
+        case '}':
+          depth--;
+          break;
+        case '\n':
+          lineNumber++;
+          lineStart = i;
+          break;
+      }
+      if (depth < 0) {
+        return new int[] {depth, lineNumber, i - lineStart, i - start};
+      }
+    }
+    return new int[] {depth, lineNumber - 1, end - lineStart - 2, end - start - 2};
+  }
 }

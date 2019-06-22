@@ -89,15 +89,18 @@ public class Language {
     // List of languages in alphabetical order. (Add yours here.)
     // Also remember to add it to build/shared/lib/languages/languages.txt.
     final String[] SUPPORTED = {
+      "ar", // Arabic
       "de", // German, Deutsch
       "en", // English
       "el", // Greek
       "es", // Spanish
       "fr", // French, Français
+      "it", // Italiano, Italian
       "ja", // Japanese
       "ko", // Korean
       "nl", // Dutch, Nederlands
       "pt", // Portuguese
+      "ru", // Russian
       "tr", // Turkish
       "uk", // Ukrainian
       "zh"  // Chinese
@@ -146,6 +149,7 @@ public class Language {
   static public void saveLanguage(String language) {
     try {
       Util.saveFile(language, prefFile);
+      prefFile.setWritable(true, false);
     } catch (Exception e) {
       e.printStackTrace();
     }
@@ -233,6 +237,18 @@ public class Language {
    */
   static public String getLanguage() {
     return init().language;
+  }
+
+
+  /**
+   * Is this a CJK language where Input Method support is suggested/required?
+   * @return true if the user is running in Japanese, Korean, or Chinese
+   */
+  static public boolean useInputMethod() {
+    final String language = getLanguage();
+    return (language.equals("ja") ||
+            language.equals("ko") ||
+            language.equals("zh"));
   }
 
 

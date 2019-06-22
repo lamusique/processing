@@ -533,10 +533,10 @@ public class MovieMaker extends JFrame implements Tool {
     // ---------------------------------
     // Create the QuickTime movie
     // ---------------------------------
-    SwingWorker w = new SwingWorker() {
+    new SwingWorker<Throwable, Object>() {
 
       @Override
-      protected Object doInBackground() {
+      protected Throwable doInBackground() {
         try {
           // Read image files
           File[] imgFiles = null;
@@ -600,25 +600,23 @@ public class MovieMaker extends JFrame implements Tool {
 
       @Override
       protected void done() {
-        Object o;
+        Throwable t;
         try {
-          o = get();
+          t = get();
         } catch (Exception ex) {
-          o = ex;
+          t = ex;
         }
-        if (o instanceof Throwable) {
-          Throwable t = (Throwable) o;
+        if (t != null) {
           t.printStackTrace();
           JOptionPane.showMessageDialog(MovieMaker.this,
-              Language.text("movie_maker.error.movie_failed") + "\n" + (t.getMessage() == null ? t.toString() : t.getMessage()),
-              Language.text("movie_maker.error.sorry"),
-              JOptionPane.ERROR_MESSAGE);
+                                      Language.text("movie_maker.error.movie_failed") + "\n" +
+                                      (t.getMessage() == null ? t.toString() : t.getMessage()),
+                                      Language.text("movie_maker.error.sorry"),
+                                      JOptionPane.ERROR_MESSAGE);
         }
         createMovieButton.setEnabled(true);
       }
-    };
-    w.execute();
-
+    }.execute();
 
   }//GEN-LAST:event_createMovie
 
@@ -694,7 +692,7 @@ public class MovieMaker extends JFrame implements Tool {
   }
 
 
-  private void cannotRead(File file) {
+  static private void cannotRead(File file) {
     String path = file.getAbsolutePath();
     String msg = Language.interpolate("movie_maker.error.cannot_read", path);
     System.err.println(msg);

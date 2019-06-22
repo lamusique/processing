@@ -41,6 +41,7 @@ import java.beans.PropertyChangeListener;
 import java.io.*;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -90,6 +91,8 @@ public class Sketch {
   /** Moved out of Editor and into here for cleaner access. */
   private boolean untitled;
 
+  /** true if we've posted a "sketch disappeared" warning */
+  private boolean disappearedWarning;
 
   /**
    * Used by the command-line version to create a sketch object.
@@ -122,6 +125,7 @@ public class Sketch {
     int suffixLength = mode.getDefaultExtension().length() + 1;
     name = mainFilename.substring(0, mainFilename.length() - suffixLength);
     folder = new File(new File(path).getParent());
+    disappearedWarning = false;
     load();
   }
 
@@ -223,6 +227,20 @@ public class Sketch {
     current = null;
     // nuke previous files and settings
     load();
+  }
+
+
+  /**
+   * Load a tab that the user added to the sketch or modified with an external
+   * editor.
+   */
+  public void loadNewTab(String filename, String ext, boolean newAddition) {
+    if (newAddition) {
+      insertCode(new SketchCode(new File(folder, filename), ext));
+    } else {
+      replaceCode(new SketchCode(new File(folder, filename), ext));
+    }
+    sortCode();
   }
 
 
@@ -656,9 +674,10 @@ public class Sketch {
         // get the changes into the sketchbook menu
         //sketchbook.rebuildMenus();
 
-        // make a new sketch, and i think this will rebuild the sketch menu
+        // make a new sketch and rebuild the sketch menu
         //editor.handleNewUnchecked();
         //editor.handleClose2();
+        editor.getBase().rebuildSketchbookMenus();
         editor.getBase().handleClose(editor, false);
 
       } else {
@@ -684,7 +703,11 @@ public class Sketch {
   }
 
 
-  protected void removeCode(SketchCode which) {
+  /**
+   * Remove a SketchCode from the list of files without deleting its file.
+   * @see #handleDeleteCode()
+   */
+  public void removeCode(SketchCode which) {
     // remove it from the internal list of files
     // resort internal list of files
     for (int i = 0; i < codeCount; i++) {
@@ -757,6 +780,16 @@ public class Sketch {
 
 
   /**
+   * Ensure that all SketchCodes are up-to-date, so that sc.save() works.
+   */
+  public void updateSketchCodes() {
+//    if (current.isModified()) {
+    current.setProgram(editor.getText());
+//    }
+  }
+
+
+  /**
    * Save all code in the current sketch. This just forces the files to save
    * in place, so if it's an untitled (un-saved) sketch, saveAs() should be
    * called instead. (This is handled inside Editor.handleSave()).
@@ -766,9 +799,7 @@ public class Sketch {
     ensureExistence();
 
     // first get the contents of the editor text area
-//    if (current.isModified()) {
-    current.setProgram(editor.getText());
-//    }
+    updateSketchCodes();
 
     // don't do anything if not actually modified
     //if (!modified) return false;
@@ -910,9 +941,7 @@ public class Sketch {
 
     // grab the contents of the current tab before saving
     // first get the contents of the editor text area
-    if (current.isModified()) {
-      current.setProgram(editor.getText());
-    }
+    updateSketchCodes();
 
     File[] copyItems = folder.listFiles(new FileFilter() {
       public boolean accept(File file) {
@@ -922,9 +951,12 @@ public class Sketch {
           return false;
         }
         // list of files/folders to be ignored during "save as"
-        for (String ignorable : mode.getIgnorable()) {
-          if (name.equals(ignorable)) {
-            return false;
+        String[] ignorable = mode.getIgnorable();
+        if (ignorable != null) {
+          for (String ignore : ignorable) {
+            if (name.equals(ignore)) {
+              return false;
+            }
           }
         }
         // ignore the extensions for code, since that'll be copied below
@@ -974,6 +1006,13 @@ public class Sketch {
   }
 
 
+  AtomicBoolean saving = new AtomicBoolean();
+
+  public boolean isSaving() {
+    return saving.get();
+  }
+
+
   /**
    * Kick off a background thread to copy everything *but* the .pde files.
    * Due to the poor way (dating back to the late 90s with DBN) that our
@@ -983,15 +1022,16 @@ public class Sketch {
    * As a result, this method will return 'true' before the full "Save As"
    * has completed, which will cause problems in weird cases.
    *
-   * For instance, saving an untitled sketch that has an enormous data
-   * folder while quitting. The save thread to move those data folder files
-   * won't have finished before this returns true, and the PDE may quit
-   * before the SwingWorker completes its job.
+   * For instance, the threading will cause problems while saving an untitled
+   * sketch that has an enormous data folder while quitting. The save thread to
+   * move those data folder files won't have finished before this returns true,
+   * and the PDE may quit before the SwingWorker completes its job.
    *
    * <a href="https://github.com/processing/processing/issues/3843">3843</a>
    */
   void startSaveAsThread(final String oldName, final String newName,
                          final File newFolder, final File[] copyItems) {
+    saving.set(true);
     EventQueue.invokeLater(new Runnable() {
       public void run() {
         final JFrame frame =
@@ -1061,6 +1101,7 @@ public class Sketch {
                 }
               }
             }
+            saving.set(false);
             return null;
           }
 
@@ -1159,6 +1200,7 @@ public class Sketch {
 
     name = sketchName;
     folder = sketchFolder;
+    disappearedWarning = false;
     codeFolder = new File(folder, "code");
     dataFolder = new File(folder, "data");
 
@@ -1366,8 +1408,8 @@ public class Sketch {
 //      System.out.println(current.visited);
 //    }
     // if current is null, then this is the first setCurrent(0)
-    if (((currentIndex == which) && (current != null))
-      || which >= codeCount || which < 0) {
+    if (which < 0 || which >= codeCount ||
+        ((currentIndex == which) && (current == code[currentIndex]))) {
       return;
     }
 
@@ -1460,28 +1502,34 @@ public class Sketch {
 
 
   /**
-   * Make sure the sketch hasn't been moved or deleted by some
-   * nefarious user. If they did, try to re-create it and save.
-   * Only checks to see if the main folder is still around,
-   * but not its contents.
+   * Make sure the sketch hasn't been moved or deleted by a nefarious user.
+   * If they did, try to re-create it and save. Only checks whether the
+   * main folder is still around, but not its contents.
    */
   public void ensureExistence() {
     if (!folder.exists()) {
-      // Disaster recovery, try to salvage what's there already.
-      Messages.showWarning(Language.text("ensure_exist.messages.missing_sketch"),
-                           Language.text("ensure_exist.messages.missing_sketch.description"));
-      try {
-        folder.mkdirs();
-        modified = true;
+      // Avoid an infinite loop if we've already warned about this
+      // https://github.com/processing/processing/issues/4805
+      if (!disappearedWarning) {
+        disappearedWarning = true;
 
-        for (int i = 0; i < codeCount; i++) {
-          code[i].save();  // this will force a save
+        // Disaster recovery, try to salvage what's there already.
+        Messages.showWarning(Language.text("ensure_exist.messages.missing_sketch"),
+                             Language.text("ensure_exist.messages.missing_sketch.description"));
+        try {
+          folder.mkdirs();
+          modified = true;
+
+          for (int i = 0; i < codeCount; i++) {
+            code[i].save();  // this will force a save
+          }
+          calcModified();
+
+        } catch (Exception e) {
+          // disappearedWarning prevents infinite loop in this scenario
+          Messages.showWarning(Language.text("ensure_exist.messages.unrecoverable"),
+                               Language.text("ensure_exist.messages.unrecoverable.description"), e);
         }
-        calcModified();
-
-      } catch (Exception e) {
-        Messages.showWarning(Language.text("ensure_exist.messages.unrecoverable"),
-                             Language.text("ensure_exist.messages.unrecoverable.description"), e);
       }
     }
   }

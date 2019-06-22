@@ -71,6 +71,7 @@ public class Library extends LocalContribution {
         if (name.equals("linux32")) return false;
         if (name.equals("linux64")) return false;
         if (name.equals("linux-armv6hf")) return false;
+        if (name.equals("linux-arm64")) return false;
         if (name.equals("android")) return false;
       }
       return true;
@@ -115,6 +116,14 @@ public class Library extends LocalContribution {
     examplesFolder = new File(folder, "examples");
     referenceFile = new File(folder, "reference/index.html");
 
+    handle();
+  }
+
+
+  /**
+   * Handles all the Java-specific parsing for library handling.
+   */
+  protected void handle() {
     File exportSettings = new File(libraryFolder, "export.txt");
     StringDict exportTable = exportSettings.exists() ?
       Util.readSettings(exportSettings) : new StringDict();
@@ -165,6 +174,12 @@ public class Library extends LocalContribution {
         nativeLibraryFolder = hostLibrary;
       }
     }
+    if (hostPlatform.equals("linux") && System.getProperty("os.arch").equals("aarch64")) {
+      hostLibrary = new File(libraryFolder, "linux-arm64");
+      if (hostLibrary.exists()) {
+        nativeLibraryFolder = hostLibrary;
+      }
+    }
 
     // save that folder for later use
     nativeLibraryPath = nativeLibraryFolder.getAbsolutePath();
@@ -174,7 +189,8 @@ public class Library extends LocalContribution {
       String platformName = platformNames[i];
       String platformName32 = platformName + "32";
       String platformName64 = platformName + "64";
-      String platformNameArmv6hh = platformName + "-armv6hf";
+      String platformNameArmv6hf = platformName + "-armv6hf";
+      String platformNameArm64 = platformName + "-arm64";
 
       // First check for things like 'application.macosx=' or 'application.windows32' in the export.txt file.
       // These will override anything in the platform-specific subfolders.
@@ -186,6 +202,8 @@ public class Library extends LocalContribution {
       String[] platformList64 = platform64 == null ? null : PApplet.splitTokens(platform64, ", ");
       String platformArmv6hf = exportTable.get("application." + platformName + "-armv6hf");
       String[] platformListArmv6hf = platformArmv6hf == null ? null : PApplet.splitTokens(platformArmv6hf, ", ");
+      String platformArm64 = exportTable.get("application." + platformName + "-arm64");
+      String[] platformListArm64 = platformArm64 == null ? null : PApplet.splitTokens(platformArm64, ", ");
 
       // If nothing specified in the export.txt entries, look for the platform-specific folders.
       if (platformAll == null) {
@@ -198,16 +216,19 @@ public class Library extends LocalContribution {
         platformList64 = listPlatformEntries(libraryFolder, platformName64, baseList);
       }
       if (platformListArmv6hf == null) {
-        platformListArmv6hf = listPlatformEntries(libraryFolder, platformNameArmv6hh, baseList);
+        platformListArmv6hf = listPlatformEntries(libraryFolder, platformNameArmv6hf, baseList);
+      }
+      if (platformListArm64 == null) {
+        platformListArm64 = listPlatformEntries(libraryFolder, platformNameArm64, baseList);
       }
 
-      if (platformList32 != null || platformList64 != null || platformListArmv6hf != null) {
+      if (platformList32 != null || platformList64 != null || platformListArmv6hf != null || platformListArm64 != null) {
         multipleArch[i] = true;
       }
 
       // if there aren't any relevant imports specified or in their own folders,
       // then use the baseList (root of the library folder) as the default.
-      if (platformList == null && platformList32 == null && platformList64 == null && platformListArmv6hf == null) {
+      if (platformList == null && platformList32 == null && platformList64 == null && platformListArmv6hf == null && platformListArm64 == null) {
         exportList.put(platformName, baseList);
 
       } else {
@@ -223,7 +244,10 @@ public class Library extends LocalContribution {
           exportList.put(platformName64, platformList64);
         }
         if (platformListArmv6hf != null) {
-          exportList.put(platformNameArmv6hh, platformListArmv6hf);
+          exportList.put(platformNameArmv6hf, platformListArmv6hf);
+        }
+        if (platformListArm64 != null) {
+          exportList.put(platformNameArm64, platformListArm64);
         }
       }
     }
@@ -258,7 +282,7 @@ public class Library extends LocalContribution {
   }
 
 
-  static protected HashMap<String, Object> packageWarningMap = new HashMap<String, Object>();
+  static protected HashMap<String, Object> packageWarningMap = new HashMap<>();
 
   /**
    * Add the packages provided by this library to the master list that maps
@@ -404,6 +428,9 @@ public class Library extends LocalContribution {
     } else if (variant.equals("armv6hf")) {
       String[] pieces = exportList.get(platformName + "-armv6hf");
       if (pieces != null) return pieces;
+    } else if (variant.equals("arm64")) {
+      String[] pieces = exportList.get(platformName + "-arm64");
+      if (pieces != null) return pieces;
     }
     return exportList.get(platformName);
   }
@@ -434,12 +461,7 @@ public class Library extends LocalContribution {
 
 
   static public boolean hasMultipleArch(int platform, List<Library> libraries) {
-    for (Library library : libraries) {
-      if (library.hasMultipleArch(platform)) {
-        return true;
-      }
-    }
-    return false;
+    return libraries.stream().anyMatch(library -> library.hasMultipleArch(platform));
   }
 
 
@@ -457,7 +479,7 @@ public class Library extends LocalContribution {
 
 
   static public List<File> discover(File folder) {
-    List<File> libraries = new ArrayList<File>();
+    List<File> libraries = new ArrayList<>();
     String[] folderNames = folder.list(junkFolderFilter);
 
     // if a bad folder or something like that, this might come back null
@@ -486,6 +508,14 @@ public class Library extends LocalContribution {
             Messages.showMessage("Ignoring bad library name", mess);
             continue;
           }
+          /*
+        } else {  // maybe it's a JS library
+          // TODO this should be in a better location
+          File jsLibrary = new File(libraryFolder, potentialName + ".js");
+          if (jsLibrary.exists()) {
+            libraries.add(baseFolder);
+          }
+          */
         }
       }
     }
@@ -494,8 +524,8 @@ public class Library extends LocalContribution {
 
 
   static public List<Library> list(File folder) {
-    List<Library> libraries = new ArrayList<Library>();
-    List<File> librariesFolders = new ArrayList<File>();
+    List<Library> libraries = new ArrayList<>();
+    List<File> librariesFolders = new ArrayList<>();
     librariesFolders.addAll(discover(folder));
 
     for (File baseFolder : librariesFolders) {

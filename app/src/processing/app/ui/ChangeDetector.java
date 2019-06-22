@@ -1,16 +1,40 @@
+/* -*- mode: java; c-basic-offset: 2; indent-tabs-mode: nil -*- */
+
+/*
+  Part of the Processing project - http://processing.org
+
+  Copyright (c) 2012-19 The Processing Foundation
+
+  This program is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License version 2
+  as published by the Free Software Foundation.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not, write to the Free Software Foundation, Inc.
+  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+*/
+
 package processing.app.ui;
 
-import java.awt.EventQueue;
-import java.awt.Frame;
 import java.awt.event.WindowEvent;
 import java.awt.event.WindowFocusListener;
 import java.io.File;
-import java.lang.reflect.InvocationTargetException;
+import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
-import javax.swing.JOptionPane;
-
+import processing.app.Language;
 import processing.app.Messages;
 import processing.app.Preferences;
 import processing.app.Sketch;
@@ -20,6 +44,9 @@ import processing.app.SketchCode;
 public class ChangeDetector implements WindowFocusListener {
   private final Sketch sketch;
   private final Editor editor;
+
+  private List<SketchCode> ignoredRemovals = new ArrayList<>();
+  private List<SketchCode> ignoredModifications = new ArrayList<>();
 
   // Windows and others seem to have a few hundred ms difference in reported
   // times, so we're arbitrarily setting a gap in time here.
@@ -32,9 +59,6 @@ public class ChangeDetector implements WindowFocusListener {
   static private final boolean DEBUG =
     Preferences.getBoolean("editor.watcher.debug");
 
-  // Store the known number of files to avoid re-asking about the same change
-//  private int lastKnownCount = -1;
-
 
   public ChangeDetector(Editor editor) {
     this.sketch = editor.sketch;
@@ -44,27 +68,14 @@ public class ChangeDetector implements WindowFocusListener {
 
   @Override
   public void windowGainedFocus(WindowEvent e) {
-    // When the window is activated, fire off a Thread to check for changes
     if (Preferences.getBoolean("editor.watcher")) {
-      new Thread(new Runnable() {
-        @Override
-        public void run() {
-          if (sketch != null) {
-            // make sure the sketch folder exists at all.
-            // if it does not, it will be re-saved, and no changes will be detected
-            sketch.ensureExistence();
+      if (sketch != null) {
+        // make sure the sketch folder exists at all.
+        // if it does not, it will be re-saved, and no changes will be detected
+        sketch.ensureExistence();
 
-//            if (lastKnownCount == -1) {
-//              lastKnownCount = sketch.getCodeCount();
-//            }
-
-            boolean alreadyPrompted = checkFileCount();
-            if (!alreadyPrompted) {
-              checkFileTimes();
-            }
-          }
-        }
-      }).start();
+        checkFiles();
+      }
     }
   }
 
@@ -76,205 +87,199 @@ public class ChangeDetector implements WindowFocusListener {
   }
 
 
-  private boolean checkFileCount() {
-    // check file count first
-
+  private void checkFiles() {
     List<String> filenames = new ArrayList<>();
+    List<String> extensions = new ArrayList<>();
+    sketch.getSketchCodeFiles(filenames, extensions);
 
-    sketch.getSketchCodeFiles(filenames, null);
+    SketchCode[] codes = sketch.getCode();
 
-    int fileCount = filenames.size();
+    // Separate codes with and without files
+    Map<Boolean, List<SketchCode>> existsMap = Arrays.stream(codes)
+        .collect(Collectors.groupingBy(code -> filenames.contains(code.getFileName())));
 
-    // Was considering keeping track of the last "known" number of files
-    // (instead of using sketch.getCodeCount() here) in case the user
-    // didn't want to reload after the number of files had changed.
-    // However, that's a bad situation anyway and there aren't good
-    // ways to recover or work around it, so just prompt the user again.
-    if (fileCount == sketch.getCodeCount()) {
-      return false;
+
+    // ADDED FILES
+
+    List<String> codeFilenames = Arrays.stream(codes)
+        .map(SketchCode::getFileName)
+        .collect(Collectors.toList());
+
+    // Get filenames which are in filesystem but don't have code
+    List<String> addedFilenames = filenames.stream()
+        .filter(f -> !codeFilenames.contains(f))
+        .collect(Collectors.toList());
+
+    // Take action if there are any added files which were not previously ignored
+    boolean added = !addedFilenames.isEmpty();
+
+
+    // REMOVED FILES
+
+    // Get codes which don't have file
+    List<SketchCode> removedCodes = Optional.ofNullable(existsMap.get(Boolean.FALSE))
+        .orElse(Collections.emptyList());
+    List<SketchCode> removedCodesFinal = removedCodes.stream()
+      .filter(code -> !ignoredRemovals.contains(code))
+      .collect(Collectors.toList());
+
+    // Show prompt if there are any removed codes which were not previously ignored
+    boolean removed = !removedCodesFinal.isEmpty();
+
+
+    /// MODIFIED FILES
+
+    // Get codes which have file with different modification time
+    List<SketchCode> modifiedCodes = existsMap.containsKey(Boolean.TRUE) ?
+      existsMap.get(Boolean.TRUE) : Collections.emptyList();
+    List<SketchCode> modifiedCodesFinal = new ArrayList<>();
+    for (SketchCode code : modifiedCodes) {
+      if (ignoredModifications.contains(code)) continue;
+      long fileLastModified = code.getFile().lastModified();
+      long codeLastModified = code.getLastModified();
+      long diff = fileLastModified - codeLastModified;
+      if (fileLastModified == 0L || diff > MODIFICATION_WINDOW_MILLIS) {
+        modifiedCodesFinal.add(code);
+      }
     }
+
+    // Show prompt if any open codes were modified
+    boolean modified = !modifiedCodesFinal.isEmpty();
+
+    // Clean ignore lists
+    ignoredModifications.retainAll(modifiedCodes);
+    ignoredRemovals.retainAll(removedCodes);
+
+
+    boolean changes = added || removed || modified;
+    // Do both PDE and disk change for any one file?
+    List<SketchCode> mergeConflicts = modifiedCodesFinal.stream()
+      .filter(SketchCode::isModified)
+      .collect(Collectors.toList());
+    boolean ask = !mergeConflicts.isEmpty() || removed;
 
     if (DEBUG) {
-      System.out.println(sketch.getName() + " file count now " + fileCount +
-                         " instead of " + sketch.getCodeCount());
+      System.out.println("ask: "             + ask + "\n" +
+                         "merge conflicts: " + mergeConflicts + ",\n" +
+                         "added filenames: " + addedFilenames + ",\n" +
+                         "removed codes: " + removedCodes + ",\n" +
+                         "ignored removed: " + ignoredRemovals + ",\n" +
+                         "modified codes: " + modifiedCodesFinal + "\n");
     }
 
-    if (reloadPrompt()) {
-      if (sketch.getMainFile().exists()) {
-        reloadSketch();
-      } else {
-        // If the main file was deleted, and that's why we're here,
-        // then we need to re-save the sketch instead.
-        try {
-          // Mark everything as modified so that it saves properly
-          for (SketchCode code : sketch.getCode()) {
-            code.setModified(true);
+
+    // No prompt yet.
+    if (changes) {
+      for (int i = 0; i < filenames.size(); i++) {
+        for (String addedTab : addedFilenames) {
+          if (filenames.get(i).equals(addedTab)) {
+            sketch.loadNewTab(filenames.get(i), extensions.get(i), true);
           }
-          sketch.save();
-        } catch (Exception e) {
-          //if that didn't work, tell them it's un-recoverable
-          showErrorEDT("Reload Failed",
-                       "The main file for this sketch was deleted\n" +
-                       "and could not be rewritten.", e);
+        }
+      }
+      for (SketchCode modifiedCode : modifiedCodesFinal) {
+        if (!mergeConflicts.contains(modifiedCode)) {
+          sketch.loadNewTab(modifiedCode.getFileName(),
+              modifiedCode.getExtension(), false);
         }
       }
 
-      /*
-      if (fileCount < 1) {
-        // if they chose to reload and there aren't any files left
-        try {
-          // make a blank file for the main PDE
-          sketch.getMainFile().createNewFile();
-        } catch (Exception e1) {
-          //if that didn't work, tell them it's un-recoverable
-          showErrorEDT("Reload failed", "The sketch contains no code files.", e1);
-          //don't try to reload again after the double fail
-          //this editor is probably trashed by this point, but a save-as might be possible
-//          skip = true;
-          return true;
-        }
-        // it's okay to do this without confirmation, because they already
-        // confirmed to deleting the unsaved changes above
-        sketch.reload();
-        showWarningEDT("Modified Reload",
-                       "You cannot delete the last code file in a sketch.\n" +
-                       "A new blank sketch file has been generated for you.");
+      // Destructive actions, so prompt.
+      if (ask) {
+        sketch.updateSketchCodes();
+
+        showReloadPrompt(mergeConflicts, removedCodesFinal,
+          scReload -> {
+            try {
+              File file = scReload.getFile();
+              File autosave = File.createTempFile(scReload.getPrettyName(),
+                ".autosave", file.getParentFile());
+              scReload.copyTo(autosave);
+            } catch (IOException e) {
+              Messages.showWarning("Could not autosave modified tab",
+                  "Your changes to " + scReload.getPrettyName() +
+                  " have not been saved, so we won't load the new version.", e);
+              scReload.setModified(true); // So we'll have another go at saving
+                                          // it later,
+              ignoredModifications.add(scReload); // but not create a loop.
+              return;
+            }
+            sketch.loadNewTab(scReload.getFileName(), scReload.getExtension(), false);
+          },
+          scKeep -> {
+            scKeep.setLastModified();
+            scKeep.setModified(true);
+          },
+          scDelete -> sketch.removeCode(scDelete),
+          scResave -> {
+            try {
+              scResave.save();
+            } catch (IOException e) {
+              if (sketch.getCode(0).equals(scResave)) {
+                // Not a fatal error; the sketch has to stay open if
+                // they're going to save the code that's in it.
+                Messages.showWarning(
+                    scResave.getFileName() + " deleted and not re-saved",
+                    "Your main tab was deleted, and Processing couldn't " +
+                    "resave it.\nYour sketch won't work without the " +
+                    "main tab.", e);
+              } else {
+                Messages.showWarning("Could not re-save deleted tab",
+                                     "Your copy of " + scResave.getPrettyName() +
+                                     " will stay in the editor.", e);
+              }
+              ignoredRemovals.add(scResave);
+              scResave.setModified(true); // So we'll have another go at
+                                          // saving it later.
+            }
+          }
+        );
       }
-      */
-    } else {  // !reload (user said no or closed the window)
-      // Because the number of files changed, they may be working with a file
-      // that doesn't exist any more. So find the files that are missing,
-      // and mark them as modified so that the next "Save" will write them.
-      for (SketchCode code : sketch.getCode()) {
-        if (!code.getFile().exists()) {
-          setCodeModified(code);
-        }
-      }
-      rebuildHeaderEDT();
+      editor.rebuildHeader();
+      sketch.setCurrentCode(sketch.getCurrentCodeIndex());
+      editor.repaintHeader();
+
+      editor.sketchChanged();
     }
-    // Yes, we've brought this up with the user (so don't bother them further)
-    return true;
-  }
 
-
-  private void checkFileTimes() {
-    List<SketchCode> reloadList = new ArrayList<>();
-    for (SketchCode code : sketch.getCode()) {
-      File sketchFile = code.getFile();
-      if (sketchFile.exists()) {
-        long diff = sketchFile.lastModified() - code.getLastModified();
-        if (diff > MODIFICATION_WINDOW_MILLIS) {
-          if (DEBUG) System.out.println(sketchFile.getName() + " " + diff + "ms");
-          reloadList.add(code);
-        }
-      } else {
-        // If a file in the sketch was not found, then it must have been
-        // deleted externally, so reload the sketch.
-        if (DEBUG) System.out.println(sketchFile.getName() + " (file disappeared)");
-        reloadList.add(code);
-      }
-    }
-
-    // If there are any files that need to be reloaded
-    if (reloadList.size() > 0) {
-      if (reloadPrompt()) {
-        reloadSketch();
-
-      } else {
-        // User said no, but take bulletproofing actions
-        for (SketchCode code : reloadList) {
-          // Set the file as modified in the Editor so the contents will
-          // save to disk when the user saves from inside Processing.
-          setCodeModified(code);
-          // Since this was canceled, update the "last modified" time so we
-          // don't ask the user about it again.
-          code.setLastModified();
-        }
-        rebuildHeaderEDT();
-      }
-    }
-  }
-
-
-  private void setCodeModified(SketchCode sc) {
-    sc.setModified(true);
-    sketch.setModified(true);
-  }
-
-
-  private void reloadSketch() {
-    sketch.reload();
-    rebuildHeaderEDT();
   }
 
 
   /**
-   * Prompt the user whether to reload the sketch. If the user says yes,
-   * perform the actual reload.
-   * @return true if user said yes, false if they hit No or closed the window
+   * Prompt the user what to do about each tab. Passes the tab to the user's
+   * choice of Consumer. Won't let you delete the main tab.
    */
-  private boolean reloadPrompt() {
-    int response = blockingYesNoPrompt(editor,
-                                       "File Modified",
-                                       "Your sketch has been modified externally.<br>" +
-                                       "Would you like to reload the sketch?",
-                                       "If you reload the sketch, any unsaved changes will be lost.");
-    return response == JOptionPane.YES_OPTION;
-  }
-
-
-  private void showErrorEDT(final String title, final String message,
-                              final Exception e) {
-    EventQueue.invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        Messages.showError(title, message, e);
+  private void showReloadPrompt(
+      List<SketchCode> mergeConflict, List<SketchCode> removed,
+      Consumer<SketchCode> modifiedReload, Consumer<SketchCode> modifiedKeep,
+      Consumer<SketchCode> delete, Consumer<SketchCode> deletedResave) {
+    for (SketchCode sc : mergeConflict) {
+      if (1 == Messages.showCustomQuestion(editor,
+          Language.text("change_detect.reload.title"),
+          Language.interpolate("change_detect.reload.question", sc.getFileName()),
+          Language.text("change_detect.reload.comment"),
+          0,
+          Language.text("change_detect.button.keep"),
+          Language.text("change_detect.button.load_new"))) {
+        modifiedReload.accept(sc);
+      } else {
+        modifiedKeep.accept(sc);
       }
-    });
-  }
-
-
-  /*
-  private void showWarningEDT(final String title, final String message) {
-    EventQueue.invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        Messages.showWarning(title, message);
-      }
-    });
-  }
-  */
-
-
-  private int blockingYesNoPrompt(final Frame editor, final String title,
-                                  final String message1,
-                                  final String message2) {
-    final int[] result = { -1 };  // yuck
-    try {
-      //have to wait for a response on this one
-      EventQueue.invokeAndWait(new Runnable() {
-        @Override
-        public void run() {
-          result[0] = Messages.showYesNoQuestion(editor, title, message1, message2);
-        }
-      });
-    } catch (InvocationTargetException e) {
-      //occurs if Base.showYesNoQuestion throws an error, so, shouldn't happen
-      e.getTargetException().printStackTrace();
-    } catch (InterruptedException e) {
-      //occurs if the EDT is interrupted, so, shouldn't happen
-      e.printStackTrace();
     }
-    return result[0];
-  }
 
-
-  private void rebuildHeaderEDT() {
-    EventQueue.invokeLater(new Runnable() {
-      @Override
-      public void run() {
-        editor.header.rebuild();
+    for (SketchCode sc : removed) {
+      if (!sketch.getCode(0).equals(sc) &&
+          1 == Messages.showCustomQuestion(editor,
+          Language.text("change_detect.delete.title"),
+          Language.interpolate("change_detect.delete.question", sc.getFileName()),
+          Language.text("change_detect.delete.comment"),
+          0,
+          Language.text("change_detect.button.resave"),
+          Language.text("change_detect.button.discard"))) {
+        delete.accept(sc);
+      } else {
+        deletedResave.accept(sc);
       }
-    });
+    }
   }
 }

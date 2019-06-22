@@ -22,10 +22,14 @@
 
 package processing.core;
 
+import java.awt.Image;
+import java.awt.color.ColorSpace;
+import java.awt.image.BufferedImage;
 import java.util.HashMap;
 import java.util.Map;
 
-import processing.core.PApplet;
+import javax.swing.ImageIcon;
+import javax.xml.bind.DatatypeConverter;
 
 
 /**
@@ -106,6 +110,7 @@ public class PShape implements PConstants {
 
   /** Texture or image data associated with this shape. */
   protected PImage image;
+  protected String imagePath = null;
 
   public static final String OUTSIDE_BEGIN_END_ERROR =
     "%1$s can only be called between beginShape() and endShape()";
@@ -1604,9 +1609,9 @@ public class PShape implements PConstants {
     } else if (family == PRIMITIVE) {
       drawPrimitive(g);
     } else if (family == GEOMETRY) {
-      // same as path
-      drawPath(g);
-//      drawGeometry(g);
+      // Not same as path: `kind` matters.
+//      drawPath(g);
+      drawGeometry(g);
     } else if (family == PATH) {
       drawPath(g);
     }
@@ -1645,6 +1650,10 @@ public class PShape implements PConstants {
              params[6], params[7]);
 
     } else if (kind == RECT) {
+
+      if (imagePath != null){
+          loadImage(g);
+      }
       if (image != null) {
         int oldMode = g.imageMode;
         g.imageMode(CORNER);
@@ -1879,6 +1888,63 @@ public class PShape implements PConstants {
     g.endShape(close ? CLOSE : OPEN);
   }
 
+  private void loadImage(PGraphics g){
+
+      if(this.imagePath.startsWith("data:image")){
+          loadBase64Image();
+      }
+
+      if(this.imagePath.startsWith("file://")){
+          loadFileSystemImage(g);
+      }
+      this.imagePath = null;
+  }
+
+  private void loadFileSystemImage(PGraphics g){
+    imagePath = imagePath.substring(7);
+    PImage loadedImage = g.parent.loadImage(imagePath);
+    if(loadedImage == null){
+      System.err.println("Error loading image file: " + imagePath);
+    }else{
+      setTexture(loadedImage);
+    }
+  }
+
+ private void loadBase64Image(){
+    String[] parts = this.imagePath.split(";base64,");
+    String extension = parts[0].substring(11);
+    String encodedData = parts[1];
+
+    byte[] decodedBytes = DatatypeConverter.parseBase64Binary(encodedData);
+
+    if(decodedBytes == null){
+      System.err.println("Decode Error on image: " + imagePath.substring(0, 20));
+      return;
+    }
+
+    Image awtImage = new ImageIcon(decodedBytes).getImage();
+
+    if (awtImage instanceof BufferedImage) {
+      BufferedImage buffImage = (BufferedImage) awtImage;
+      int space = buffImage.getColorModel().getColorSpace().getType();
+      if (space == ColorSpace.TYPE_CMYK) {
+       return;
+      }
+    }
+
+    PImage loadedImage = new PImage(awtImage);
+    if (loadedImage.width == -1) {
+      // error...
+    }
+
+    // if it's a .gif image, test to see if it has transparency
+    if (extension.equals("gif") || extension.equals("png") ||
+      extension.equals("unknown")) {
+    loadedImage.checkAlpha();
+    }
+
+    setTexture(loadedImage);
+  }
 
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
@@ -2040,7 +2106,7 @@ public class PShape implements PConstants {
       parent.addName(nom, shape);
     } else {
       if (nameTable == null) {
-        nameTable = new HashMap<String,PShape>();
+        nameTable = new HashMap<>();
       }
       nameTable.put(nom, shape);
     }
@@ -2387,14 +2453,14 @@ public class PShape implements PConstants {
  /**
    * ( begin auto-generated from PShape_setFill.xml )
    *
-   * The <b>setFill()</b> method defines the fill color of a <b>PShape</b>. 
-   * This method is used after shapes are created or when a shape is defined explicitly 
-   * (e.g. <b>createShape(RECT, 20, 20, 80, 80)</b>) as shown in the above example. 
-   * When a shape is created with <b>beginShape()</b> and <b>endShape()</b>, its 
-   * attributes may be changed with <b>fill()</b> and <b>stroke()</b> within 
-   * <b>beginShape()</b> and <b>endShape()</b>. However, after the shape is 
-   * created, only the <b>setFill()</b> method can define a new fill value for 
-   * the <b>PShape</b>. 
+   * The <b>setFill()</b> method defines the fill color of a <b>PShape</b>.
+   * This method is used after shapes are created or when a shape is defined explicitly
+   * (e.g. <b>createShape(RECT, 20, 20, 80, 80)</b>) as shown in the above example.
+   * When a shape is created with <b>beginShape()</b> and <b>endShape()</b>, its
+   * attributes may be changed with <b>fill()</b> and <b>stroke()</b> within
+   * <b>beginShape()</b> and <b>endShape()</b>. However, after the shape is
+   * created, only the <b>setFill()</b> method can define a new fill value for
+   * the <b>PShape</b>.
    *
    * ( end auto-generated )
    *
@@ -2543,14 +2609,14 @@ public class PShape implements PConstants {
   /**
    * ( begin auto-generated from PShape_setStroke.xml )
    *
-   * The <b>setStroke()</b> method defines the outline color of a <b>PShape</b>. 
-   * This method is used after shapes are created or when a shape is defined 
-   * explicitly (e.g. <b>createShape(RECT, 20, 20, 80, 80)</b>) as shown in 
-   * the above example. When a shape is created with <b>beginShape()</b> and 
-   * <b>endShape()</b>, its attributes may be changed with <b>fill()</b> and 
-   * <b>stroke()</b> within <b>beginShape()</b> and <b>endShape()</b>. 
-   * However, after the shape is created, only the <b>setStroke()</b> method 
-   * can define a new stroke value for the <b>PShape</b>. 
+   * The <b>setStroke()</b> method defines the outline color of a <b>PShape</b>.
+   * This method is used after shapes are created or when a shape is defined
+   * explicitly (e.g. <b>createShape(RECT, 20, 20, 80, 80)</b>) as shown in
+   * the above example. When a shape is created with <b>beginShape()</b> and
+   * <b>endShape()</b>, its attributes may be changed with <b>fill()</b> and
+   * <b>stroke()</b> within <b>beginShape()</b> and <b>endShape()</b>.
+   * However, after the shape is created, only the <b>setStroke()</b> method
+   * can define a new stroke value for the <b>PShape</b>.
    *
    * ( end auto-generated )
    *
@@ -2891,13 +2957,24 @@ public class PShape implements PConstants {
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
 
-  // http://www.ecse.rpi.edu/Homepages/wrf/Research/Short_Notes/pnpoly.html
+  /**
+   * Return true if this x, y coordinate is part of this shape. Only works
+   * with PATH shapes or GROUP shapes that contain other GROUPs or PATHs.
+   */
   public boolean contains(float x, float y) {
     if (family == PATH) {
+      // apply the inverse transformation matrix to the point coordinates
+      PMatrix inverseCoords = matrix.get();
+      inverseCoords.invert();  // maybe cache this?
+      inverseCoords.invert();  // maybe cache this?
+      PVector p = new PVector();
+      inverseCoords.mult(new PVector(x,y),p);
+
+      // http://www.ecse.rpi.edu/Homepages/wrf/Research/Short_Notes/pnpoly.html
       boolean c = false;
       for (int i = 0, j = vertexCount-1; i < vertexCount; j = i++) {
-        if (((vertices[i][Y] > y) != (vertices[j][Y] > y)) &&
-            (x <
+        if (((vertices[i][Y] > p.y) != (vertices[j][Y] > p.y)) &&
+            (p.x <
                 (vertices[j][X]-vertices[i][X]) *
                 (y-vertices[i][Y]) /
                 (vertices[j][1]-vertices[i][Y]) +
@@ -2906,7 +2983,18 @@ public class PShape implements PConstants {
         }
       }
       return c;
+
+    } else if (family == GROUP) {
+      // If this is a group, loop through children until we find one that
+      // contains the supplied coordinates. If a child does not support
+      // contains() throw a warning and continue.
+      for (int i = 0; i < childCount; i++) {
+        if (children[i].contains(x, y)) return true;
+      }
+      return false;
+
     } else {
+      // https://github.com/processing/processing/issues/1280
       throw new IllegalArgumentException("The contains() method is only implemented for paths.");
     }
   }

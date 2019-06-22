@@ -41,7 +41,6 @@ import javafx.scene.image.PixelWriter;
 import javafx.scene.image.WritableImage;
 import javafx.scene.image.WritablePixelFormat;
 import javafx.scene.paint.Color;
-import javafx.scene.paint.Paint;
 import javafx.scene.shape.ArcType;
 import javafx.scene.shape.StrokeLineCap;
 import javafx.scene.shape.StrokeLineJoin;
@@ -64,6 +63,7 @@ public class PGraphicsFX2D extends PGraphics {
   Path2D workPath = new Path2D();
   Path2D auxPath = new Path2D();
   boolean openContour;
+  boolean adjustedForThinLines;
   /// break the shape at the next vertex (next vertex() call is a moveto())
   boolean breakShape;
 
@@ -207,6 +207,7 @@ public class PGraphicsFX2D extends PGraphics {
   public void beginShape(int kind) {
     shape = kind;
     vertexCount = 0;
+    curveVertexCount = 0;
 
     workPath.reset();
     auxPath.reset();
@@ -214,7 +215,7 @@ public class PGraphicsFX2D extends PGraphics {
     flushPixels();
 
     if (drawingThinLines()) {
-      pushMatrix();
+      adjustedForThinLines = true;
       translate(0.5f, 0.5f);
     }
   }
@@ -420,8 +421,9 @@ public class PGraphicsFX2D extends PGraphics {
       }
     }
     shape = 0;
-    if (drawingThinLines()) {
-      popMatrix();
+    if (adjustedForThinLines) {
+      adjustedForThinLines = false;
+      translate(-0.5f, -0.5f);
     }
     loaded = false;
   }
@@ -643,9 +645,27 @@ public class PGraphicsFX2D extends PGraphics {
       int mw = mx2 - mx1;
       int mh = my2 - my1;
 
-      PixelWriter pw = context.getPixelWriter();
-      pw.setPixels(mx1, my1, mw, mh, argbFormat, pixels,
-                   mx1 + my1 * pixelWidth, pixelWidth);
+      if (pixelDensity == 1) {
+        PixelWriter pw = context.getPixelWriter();
+        pw.setPixels(mx1, my1, mw, mh, argbFormat, pixels,
+                     mx1 + my1 * pixelWidth, pixelWidth);
+      } else {
+        // The only way to push all the pixels is to draw a scaled-down image
+        if (snapshotImage == null ||
+            snapshotImage.getWidth() != pixelWidth ||
+            snapshotImage.getHeight() != pixelHeight) {
+          snapshotImage = new WritableImage(pixelWidth, pixelHeight);
+        }
+
+        PixelWriter pw = snapshotImage.getPixelWriter();
+        pw.setPixels(mx1, my1, mw, mh, argbFormat, pixels,
+                     mx1 + my1 * pixelWidth, pixelWidth);
+        context.save();
+        resetMatrix();
+        context.scale(1d / pixelDensity, 1d / pixelDensity);
+        context.drawImage(snapshotImage, mx1, my1, mw, mh, mx1, my1, mw, mh);
+        context.restore();
+      }
     }
 
     modified = false;
@@ -1011,8 +1031,8 @@ public class PGraphicsFX2D extends PGraphics {
 
     // Nuke the cache if the image was resized
     if (cash != null) {
-      if (who.width != cash.image.getWidth() ||
-          who.height != cash.image.getHeight()) {
+      if (who.pixelWidth != cash.image.getWidth() ||
+          who.pixelHeight != cash.image.getHeight()) {
         cash = null;
       }
     }
@@ -1039,11 +1059,16 @@ public class PGraphicsFX2D extends PGraphics {
         // This might be a PGraphics that hasn't been drawn to yet.
         // Can't just bail because the cache has been created above.
         // https://github.com/processing/processing/issues/2208
-        who.pixels = new int[who.width * who.height];
+        who.pixels = new int[who.pixelWidth * who.pixelHeight];
       }
       cash.update(who, tint, tintColor);
       who.setModified(false);
     }
+
+    u1 *= who.pixelDensity;
+    v1 *= who.pixelDensity;
+    u2 *= who.pixelDensity;
+    v2 *= who.pixelDensity;
 
     context.drawImage(((ImageCache) getCache(who)).image,
                       u1, v1, u2-u1, v2-v1,
@@ -1085,14 +1110,14 @@ public class PGraphicsFX2D extends PGraphics {
 //                                  BufferedImage.TYPE_INT_ARGB);
 //      }
       if (image == null) {
-        image = new WritableImage(source.width, source.height);
+        image = new WritableImage(source.pixelWidth, source.pixelHeight);
       }
 
       //WritableRaster wr = image.getRaster();
       PixelWriter pw = image.getPixelWriter();
       if (tint) {
-        if (tintedTemp == null || tintedTemp.length != source.width) {
-          tintedTemp = new int[source.width];
+        if (tintedTemp == null || tintedTemp.length != source.pixelWidth) {
+          tintedTemp = new int[source.pixelWidth];
         }
         int a2 = (tintColor >> 24) & 0xff;
 //        System.out.println("tint color is " + a2);
@@ -1106,8 +1131,8 @@ public class PGraphicsFX2D extends PGraphics {
           // The target image is opaque, meaning that the source image has no
           // alpha (is not ARGB), and the tint has no alpha.
           int index = 0;
-          for (int y = 0; y < source.height; y++) {
-            for (int x = 0; x < source.width; x++) {
+          for (int y = 0; y < source.pixelHeight; y++) {
+            for (int x = 0; x < source.pixelWidth; x++) {
               int argb1 = source.pixels[index++];
               int r1 = (argb1 >> 16) & 0xff;
               int g1 = (argb1 >> 8) & 0xff;
@@ -1122,7 +1147,7 @@ public class PGraphicsFX2D extends PGraphics {
                   (((b2 * b1) & 0xff00) >> 8);
             }
             //wr.setDataElements(0, y, source.width, 1, tintedTemp);
-            pw.setPixels(0, y, source.width, 1, argbFormat, tintedTemp, 0, source.width);
+            pw.setPixels(0, y, source.pixelWidth, 1, argbFormat, tintedTemp, 0, source.pixelWidth);
           }
           // could this be any slower?
 //          float[] scales = { tintR, tintG, tintB };
@@ -1136,19 +1161,19 @@ public class PGraphicsFX2D extends PGraphics {
               (tintColor & 0xffffff) == 0xffffff) {
             int hi = tintColor & 0xff000000;
             int index = 0;
-            for (int y = 0; y < source.height; y++) {
-              for (int x = 0; x < source.width; x++) {
+            for (int y = 0; y < source.pixelHeight; y++) {
+              for (int x = 0; x < source.pixelWidth; x++) {
                 tintedTemp[x] = hi | (source.pixels[index++] & 0xFFFFFF);
               }
               //wr.setDataElements(0, y, source.width, 1, tintedTemp);
-              pw.setPixels(0, y, source.width, 1, argbFormat, tintedTemp, 0, source.width);
+              pw.setPixels(0, y, source.pixelWidth, 1, argbFormat, tintedTemp, 0, source.pixelWidth);
             }
           } else {
             int index = 0;
-            for (int y = 0; y < source.height; y++) {
+            for (int y = 0; y < source.pixelHeight; y++) {
               if (source.format == RGB) {
                 int alpha = tintColor & 0xFF000000;
-                for (int x = 0; x < source.width; x++) {
+                for (int x = 0; x < source.pixelWidth; x++) {
                   int argb1 = source.pixels[index++];
                   int r1 = (argb1 >> 16) & 0xff;
                   int g1 = (argb1 >> 8) & 0xff;
@@ -1159,7 +1184,7 @@ public class PGraphicsFX2D extends PGraphics {
                       (((b2 * b1) & 0xff00) >> 8);
                 }
               } else if (source.format == ARGB) {
-                for (int x = 0; x < source.width; x++) {
+                for (int x = 0; x < source.pixelWidth; x++) {
                   int argb1 = source.pixels[index++];
                   int a1 = (argb1 >> 24) & 0xff;
                   int r1 = (argb1 >> 16) & 0xff;
@@ -1173,14 +1198,14 @@ public class PGraphicsFX2D extends PGraphics {
                 }
               } else if (source.format == ALPHA) {
                 int lower = tintColor & 0xFFFFFF;
-                for (int x = 0; x < source.width; x++) {
+                for (int x = 0; x < source.pixelWidth; x++) {
                   int a1 = source.pixels[index++];
                   tintedTemp[x] =
                       (((a2 * a1) & 0xff00) << 16) | lower;
                 }
               }
               //wr.setDataElements(0, y, source.width, 1, tintedTemp);
-              pw.setPixels(0, y, source.width, 1, argbFormat, tintedTemp, 0, source.width);
+              pw.setPixels(0, y, source.pixelWidth, 1, argbFormat, tintedTemp, 0, source.pixelWidth);
             }
           }
           // Not sure why ARGB images take the scales in this order...
@@ -1202,8 +1227,8 @@ public class PGraphicsFX2D extends PGraphics {
         // If no tint, just shove the pixels on in there verbatim
         //wr.setDataElements(0, 0, source.width, source.height, source.pixels);
         //System.out.println("moving the big one");
-        pw.setPixels(0, 0, source.width, source.height,
-                     argbFormat, source.pixels, 0, source.width);
+        pw.setPixels(0, 0, source.pixelWidth, source.pixelHeight,
+                     argbFormat, source.pixels, 0, source.pixelWidth);
       }
       this.tinted = tint;
       this.tintedColor = tintColor;
@@ -2012,15 +2037,20 @@ public class PGraphicsFX2D extends PGraphics {
     modified = false;
     loaded = false;
 
+    // Save drawing context (transform, fill, blend mode, etc.)
+    context.save();
+
+    // Reset transform to identity
+    context.setTransform(new Affine());
+
     // This only takes into account cases where this is the primary surface.
     // Not sure what we do with offscreen anyway.
-    Paint savedFill = context.getFill();
-    BlendMode savedBlend = context.getGlobalBlendMode();
     context.setFill(new Color(backgroundR, backgroundG, backgroundB, backgroundA));
     context.setGlobalBlendMode(BlendMode.SRC_OVER);
     context.fillRect(0, 0, width, height);
-    context.setFill(savedFill);
-    context.setGlobalBlendMode(savedBlend);
+
+    // Restore drawing context (transform, fill, blend mode, etc.)
+    context.restore();
   }
 
 
@@ -2126,8 +2156,9 @@ public class PGraphicsFX2D extends PGraphics {
         snapshotImage = new WritableImage(pixelWidth, pixelHeight);
       }
 
-      SnapshotParameters sp = new SnapshotParameters();
+      SnapshotParameters sp = null;
       if (pixelDensity != 1) {
+        sp = new SnapshotParameters();
         sp.setTransform(Transform.scale(pixelDensity, pixelDensity));
       }
       snapshotImage = ((PSurfaceFX) surface).canvas.snapshot(sp, snapshotImage);

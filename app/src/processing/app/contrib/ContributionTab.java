@@ -23,14 +23,13 @@
 package processing.app.contrib;
 
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
-import java.awt.Font;
 import java.awt.event.*;
 import java.util.*;
 
 import javax.swing.*;
 import javax.swing.event.*;
-import javax.swing.text.*;
 
 import processing.app.*;
 import processing.app.ui.Editor;
@@ -39,7 +38,7 @@ import processing.app.ui.Toolkit;
 
 public class ContributionTab extends JPanel {
   static final String ANY_CATEGORY = Language.text("contrib.all");
-  static final int FILTER_WIDTH = 180;
+  static final int FILTER_WIDTH = Toolkit.zoom(180);
 
   ContributionType contribType;
   ManagerFrame contribDialog;
@@ -74,35 +73,13 @@ public class ContributionTab extends JPanel {
     this.contribDialog = dialog;
     this.contribType = type;
 
-    /*
-    if (type == ContributionType.MODE) {
-      title = Language.text("contrib.manager_title.mode");
-    } else if (type == ContributionType.TOOL) {
-      title = Language.text("contrib.manager_title.tool");
-    } else if (type == ContributionType.LIBRARY) {
-      title = Language.text("contrib.manager_title.library");
-    } else if (type == ContributionType.EXAMPLES) {
-      title = Language.text("contrib.manager_title.examples");
-    }
-    */
-
-    filter = new Contribution.Filter() {
-      public boolean matches(Contribution contrib) {
-        return contrib.getType() == contribType;
-      }
-    };
+    filter = contrib -> contrib.getType() == contribType;
 
     contribListing = ContributionListing.getInstance();
     statusPanel = new StatusPanel(this, 650);
-    contributionListPanel = new ListPanel(this, filter);
+    contributionListPanel = new ListPanel(this, filter, false);
     contribListing.addListener(contributionListPanel);
   }
-
-
-//  public boolean hasUpdates(Base base) {
-//    return contribListing.hasUpdates(base);
-//  }
-
 
   public void showFrame(final Editor editor, boolean error, boolean loading) {
     this.editor = editor;
@@ -184,7 +161,7 @@ public class ContributionTab extends JPanel {
 
     categoryChooser = new JComboBox<String>();
     categoryChooser.setMaximumRowCount(20);
-    categoryChooser.setFont(Toolkit.getSansFont(14, Font.PLAIN));
+    categoryChooser.setFont(ManagerFrame.NORMAL_PLAIN);
 
     updateCategoryChooser();
 
@@ -212,23 +189,26 @@ public class ContributionTab extends JPanel {
     layout.setAutoCreateGaps(true);
     layout.setAutoCreateContainerGaps(true);
     errorPanel.setLayout(layout);
-//    errorPanel.setBorder(BorderFactory.createMatteBorder(2, 0, 0, 0, Color.BLACK));
     errorMessage = new JTextPane();
     errorMessage.setEditable(false);
     errorMessage.setContentType("text/html");
-    errorMessage.setText("<html><body>Could not connect to the Processing server.<br>"
+    errorMessage.setText("<html><body><center>Could not connect to the Processing server.<br>"
       + "Contributions cannot be installed or updated without an Internet connection.<br>"
-      + "Please verify your network connection again, then try connecting again.</body></html>");
-    errorMessage.setFont(Toolkit.getSansFont(14, Font.PLAIN));
-    errorMessage.setMaximumSize(new Dimension(550, 50));
+      + "Please verify your network connection again, then try connecting again.</center></body></html>");
+    DetailPanel.setTextStyle(errorMessage, "1em");
+    Dimension dim = new Dimension(550, 60);
+    errorMessage.setMaximumSize(dim);
+    errorMessage.setMinimumSize(dim);
     errorMessage.setOpaque(false);
 
+    /*
     StyledDocument doc = errorMessage.getStyledDocument();
     SimpleAttributeSet center = new SimpleAttributeSet();
     StyleConstants.setAlignment(center, StyleConstants.ALIGN_CENTER);
     doc.setParagraphAttributes(0, doc.getLength(), center, false);
+    */
 
-    closeButton = new JButton(Toolkit.getLibIconX("manager/close"));
+    closeButton = Toolkit.createIconButton("manager/close");
     closeButton.setContentAreaFilled(false);
     closeButton.addActionListener(new ActionListener() {
       public void actionPerformed(ActionEvent e) {
@@ -236,7 +216,7 @@ public class ContributionTab extends JPanel {
       }
     });
     tryAgainButton = new JButton("Try Again");
-    tryAgainButton.setFont(Toolkit.getSansFont(14, Font.PLAIN));
+    tryAgainButton.setFont(ManagerFrame.NORMAL_PLAIN);
     tryAgainButton.addActionListener(new ActionListener() {
       public void actionPerformed(ActionEvent e) {
         contribDialog.makeAndShowTab(false, true);
@@ -287,9 +267,7 @@ public class ContributionTab extends JPanel {
 
 
   protected void filterLibraries(String category, List<String> filters) {
-    List<Contribution> filteredLibraries =
-      contribListing.getFilteredLibraryList(category, filters);
-    contributionListPanel.filterLibraries(filteredLibraries);
+    contributionListPanel.filterLibraries(category, filters);
   }
 
 
@@ -352,62 +330,79 @@ public class ContributionTab extends JPanel {
   }
 
 
-  //TODO: this is causing a lot of bugs as the hint is wrongly firing applyFilter()
   class FilterField extends JTextField {
-    Icon searchIcon;
     List<String> filters;
-    JLabel filterLabel;
 
     public FilterField () {
       super("");
 
-      filterLabel = new JLabel("Filter");
-      filterLabel.setFont(Toolkit.getSansFont(14, Font.PLAIN));
+      JLabel filterLabel = new JLabel("Filter");
+      filterLabel.setFont(ManagerFrame.NORMAL_PLAIN);
       filterLabel.setOpaque(false);
 
-      setFont(Toolkit.getSansFont(14, Font.PLAIN));
-      searchIcon = Toolkit.getLibIconX("manager/search");
-      filterLabel.setIcon(searchIcon);
+      setFont(ManagerFrame.NORMAL_PLAIN);
+      filterLabel.setIcon(Toolkit.getLibIconX("manager/search"));
+      JButton removeFilter = Toolkit.createIconButton("manager/remove");
+      removeFilter.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 2));
+      removeFilter.setBorderPainted(false);
+      removeFilter.setContentAreaFilled(false);
+      removeFilter.setCursor(Cursor.getDefaultCursor());
+      removeFilter.addActionListener(new ActionListener() {
+        @Override
+        public void actionPerformed(ActionEvent e) {
+          setText("");
+          filterField.requestFocusInWindow();
+        }
+      });
       //searchIcon = new ImageIcon(java.awt.Toolkit.getDefaultToolkit().getImage("NSImage://NSComputerTemplate"));
       setOpaque(false);
-      //setBorder(BorderFactory.createMatteBorder(0, 33, 0, 0, searchIcon));
 
       GroupLayout fl = new GroupLayout(this);
       setLayout(fl);
-      fl.setHorizontalGroup(fl.createSequentialGroup().addComponent(filterLabel));
+      fl.setHorizontalGroup(fl
+        .createSequentialGroup()
+        .addComponent(filterLabel)
+        .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
+                         GroupLayout.PREFERRED_SIZE, Short.MAX_VALUE)
+        .addComponent(removeFilter));
+
       fl.setVerticalGroup(fl.createSequentialGroup()
                           .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
                                            GroupLayout.PREFERRED_SIZE, Short.MAX_VALUE)
+                          .addGroup(fl.createParallelGroup()
                           .addComponent(filterLabel)
+                          .addComponent(removeFilter))
                           .addPreferredGap(LayoutStyle.ComponentPlacement.RELATED,
                                            GroupLayout.PREFERRED_SIZE, Short.MAX_VALUE));
+      removeFilter.setVisible(false);
 
       filters = new ArrayList<String>();
 
       addFocusListener(new FocusListener() {
         public void focusLost(FocusEvent focusEvent) {
           if (getText().isEmpty()) {
-//            setBorder(BorderFactory.createMatteBorder(0, 33, 0, 0, searchIcon));
             filterLabel.setVisible(true);
           }
         }
 
         public void focusGained(FocusEvent focusEvent) {
-//          setBorder(BorderFactory.createEmptyBorder(0, 3, 0, 0));
           filterLabel.setVisible(false);
         }
       });
 
       getDocument().addDocumentListener(new DocumentListener() {
         public void removeUpdate(DocumentEvent e) {
+          removeFilter.setVisible(!getText().isEmpty());
           applyFilter();
         }
 
         public void insertUpdate(DocumentEvent e) {
+          removeFilter.setVisible(!getText().isEmpty());
           applyFilter();
         }
 
         public void changedUpdate(DocumentEvent e) {
+          removeFilter.setVisible(!getText().isEmpty());
           applyFilter();
         }
       });
@@ -442,15 +437,16 @@ public class ContributionTab extends JPanel {
       contributionListPanel.panelByContribution.values();
     for (DetailPanel detailPanel : collection) {
       detailPanel.update();
-
-    // Refreshing the ContributionUpdateTab's status icons
-    contributionListPanel.updatePanelOrdering(contributionListPanel
-      .panelByContribution.keySet());
     }
+    contributionListPanel.model.fireTableDataChanged();
   }
 
 
   protected boolean hasUpdates() {
     return contributionListPanel.getRowCount() > 0;
+  }
+
+  public boolean filterHasFocus() {
+      return filterField != null && filterField.hasFocus();
   }
 }

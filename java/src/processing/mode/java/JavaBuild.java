@@ -3,6 +3,7 @@
 /*
 Part of the Processing project - http://processing.org
 
+Copyright (c) 2012-19 The Processing Foundation
 Copyright (c) 2004-12 Ben Fry and Casey Reas
 Copyright (c) 2001-04 Massachusetts Institute of Technology
 
@@ -23,22 +24,39 @@ Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 package processing.mode.java;
 
 import java.io.*;
-import java.util.*;
-import java.util.zip.*;
+import java.util.ArrayList;
+import java.util.Enumeration;
+import java.util.HashMap;
+import java.util.List;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
+import java.util.zip.ZipOutputStream;
 
 import org.apache.tools.ant.BuildException;
 import org.apache.tools.ant.DefaultLogger;
 import org.apache.tools.ant.Project;
 import org.apache.tools.ant.ProjectHelper;
 
-import processing.app.*;
+import processing.app.Base;
+import processing.app.Language;
+import processing.app.Library;
+import processing.app.Messages;
+import processing.app.Mode;
+import processing.app.Platform;
+import processing.app.Preferences;
+import processing.app.Sketch;
+import processing.app.SketchCode;
+import processing.app.SketchException;
+import processing.app.Util;
 import processing.app.exec.ProcessHelper;
-import processing.core.*;
+import processing.core.PApplet;
+import processing.core.PConstants;
 import processing.data.StringList;
 import processing.data.XML;
-import processing.mode.java.preproc.*;
-
-// Would you believe there's a java.lang.Compiler class? I wouldn't.
+import processing.mode.java.pdex.SourceUtils;
+import processing.mode.java.preproc.PdePreprocessor;
+import processing.mode.java.preproc.PreprocessorResult;
+import processing.mode.java.preproc.SurfaceInfo;
 
 
 public class JavaBuild {
@@ -78,51 +96,6 @@ public class JavaBuild {
 
 
   /**
-   * Cleanup temporary files used during a build/run.
-   */
-//  protected void cleanup() {
-//    // if the java runtime is holding onto any files in the build dir, we
-//    // won't be able to delete them, so we need to force a gc here
-//    System.gc();
-//
-//    // note that we can't remove the builddir itself, otherwise
-//    // the next time we start up, internal runs using Runner won't
-//    // work because the build dir won't exist at startup, so the classloader
-//    // will ignore the fact that that dir is in the CLASSPATH in run.sh
-//    Base.removeDescendants(tempBuildFolder);
-//  }
-
-
-  /**
-   * Preprocess, Compile, and Run the current code.
-   * <P>
-   * There are three main parts to this process:
-   * <PRE>
-   *   (0. if not java, then use another 'engine'.. i.e. python)
-   *
-   *    1. do the p5 language preprocessing
-   *       this creates a working .java file in a specific location
-   *       better yet, just takes a chunk of java code and returns a
-   *       new/better string editor can take care of saving this to a
-   *       file location
-   *
-   *    2. compile the code from that location
-   *       catching errors along the way
-   *       placing it in a ready classpath, or .. ?
-   *
-   *    3. run the code
-   *       needs to communicate location for window
-   *       and maybe setup presentation space as well
-   *       run externally if a code folder exists,
-   *       or if more than one file is in the project
-   *
-   *    X. afterwards, some of these steps need a cleanup function
-   * </PRE>
-   */
-  //protected String compile() throws RunnerException {
-
-
-  /**
    * Run the build inside a temporary build folder. Used for run/present.
    * @return null if compilation failed, main class name if not
    * @throws RunnerException
@@ -145,17 +118,11 @@ public class JavaBuild {
     this.srcFolder = srcFolder;
     this.binFolder = binFolder;
 
-//    Base.openFolder(srcFolder);
-//    Base.openFolder(binFolder);
-
     // run the preprocessor
     String classNameFound = preprocess(srcFolder, sizeWarning);
 
     // compile the program. errors will happen as a RunnerException
     // that will bubble up to whomever called build().
-//    Compiler compiler = new Compiler(this);
-//    String bootClasses = System.getProperty("sun.boot.class.path");
-//    if (compiler.compile(this, srcFolder, binFolder, primaryClassName, getClassPath(), bootClasses)) {
     if (Compiler.compile(this)) {
       sketchClassName = classNameFound;
       return classNameFound;
@@ -184,11 +151,6 @@ public class JavaBuild {
    * @param buildPath Location to copy all the .java files
    * @return null if compilation failed, main class name if not
    */
-//  public String preprocess() throws SketchException {
-//    return preprocess(sketch.makeTempFolder());
-//  }
-
-
   public String preprocess(File srcFolder, boolean sizeWarning) throws SketchException {
     return preprocess(srcFolder, null, new PdePreprocessor(sketch.getName()), sizeWarning);
   }
@@ -260,10 +222,11 @@ public class JavaBuild {
 
     // Remove the entries being moved to settings(). They will be re-inserted
     // by writeFooter() when it emits the settings() method.
-    if (sizeInfo != null && sizeInfo.hasSettings()) {
-//      String sizeStatement = sizeInfo.getStatement();
+    // If the user already has a settings() method, don't mess with anything.
+    // https://github.com/processing/processing/issues/4703
+    if (!PdePreprocessor.hasSettingsMethod(bigCode.toString()) &&
+        sizeInfo != null && sizeInfo.hasSettings()) {
       for (String stmt : sizeInfo.getStatements()) {
-        //System.out.format("size stmt is '%s'%n", sizeStatement);
         // Don't remove newlines (and while you're at it, just keep spaces)
         // https://github.com/processing/processing/issues/3654
         stmt = stmt.trim();
@@ -283,19 +246,18 @@ public class JavaBuild {
       File outputFolder = (packageName == null) ?
         srcFolder : new File(srcFolder, packageName.replace('.', '/'));
       outputFolder.mkdirs();
-//      Base.openFolder(outputFolder);
       final File java = new File(outputFolder, sketch.getName() + ".java");
-      final PrintWriter stream = new PrintWriter(new FileWriter(java));
       try {
-        result = preprocessor.write(stream, bigCode.toString(), codeFolderPackages);
-      } finally {
-        stream.close();
+        final PrintWriter writer = PApplet.createWriter(java);
+        try {
+          result = preprocessor.write(writer, bigCode.toString(), codeFolderPackages);
+        } finally {
+          writer.close();
+        }
+      } catch (RuntimeException re) {
+        re.printStackTrace();
+        throw new SketchException("Could not write " + java.getAbsolutePath());
       }
-    } catch (FileNotFoundException fnfe) {
-      fnfe.printStackTrace();
-      String msg = "Build folder disappeared or could not be written";
-      throw new SketchException(msg);
-
     } catch (antlr.RecognitionException re) {
       // re also returns a column that we're not bothering with for now
       // first assume that it's the main file
@@ -305,40 +267,34 @@ public class JavaBuild {
       // then search through for anyone else whose preprocName is null,
       // since they've also been combined into the main pde.
       int errorFile = findErrorFile(errorLine);
-//      System.out.println("error line is " + errorLine + ", file is " + errorFile);
       errorLine -= sketch.getCode(errorFile).getPreprocOffset();
-//      System.out.println("  preproc offset for that file: " + sketch.getCode(errorFile).getPreprocOffset());
-
-//      System.out.println("i found this guy snooping around..");
-//      System.out.println("whatcha want me to do with 'im boss?");
-//      System.out.println(errorLine + " " + errorFile + " " + code[errorFile].getPreprocOffset());
 
       String msg = re.getMessage();
 
-      //System.out.println(java.getAbsolutePath());
-//      System.out.println(bigCode);
+      if (msg.contains("expecting RCURLY") || msg.contains("expecting LCURLY")) {
+        for (int i = 0; i < sketch.getCodeCount(); i++) {
+          SketchCode sc = sketch.getCode(i);
+          if (sc.isExtension("pde")) {
+            String s = sc.getProgram();
+            int[] braceTest = SourceUtils.checkForMissingBraces(
+                SourceUtils.scrubCommentsAndStrings(s) + "\n", 0, s.length()+1);
+            if (braceTest[0] == 0) continue;
 
-      if (msg.contains("expecting RCURLY")) {
-      //if (msg.equals("expecting RCURLY, found 'null'")) {
-        // This can be a problem since the error is sometimes listed as a line
-        // that's actually past the number of lines. For instance, it might
-        // report "line 15" of a 14 line program. Added code to highlightLine()
-        // inside Editor to deal with this situation (since that code is also
-        // useful for other similar situations).
-        throw new SketchException("Found one too many { characters " +
-                                  "without a } to match it.",
-                                  errorFile, errorLine, re.getColumn(), false);
-      }
-
-      if (msg.contains("expecting LCURLY")) {
-        System.err.println(msg);
-        String suffix = ".";
-        String[] m = PApplet.match(msg, "found ('.*')");
-        if (m != null) {
-          suffix = ", not " + m[1] + ".";
+            // Completely ignoring the errorFile/errorLine given since it's
+            // likely to be the wrong tab. For the same reason, I'm not showing
+            // the result of PApplet.match(msg, "found ('.*')") on missing
+            // LCURLY.
+            throw new SketchException(braceTest[0] > 0
+              ? "Found an extra { character without a } to match it."
+              : "Found an extra } character without a { to match it.",
+              i, braceTest[1], braceTest[2], false);
+          }
         }
-        throw new SketchException("Was expecting a { character" + suffix,
-                                   errorFile, errorLine, re.getColumn(), false);
+        // If we're still here, there's the right brackets, just not in the
+        // right place. Passing on the original error.
+        throw new SketchException(
+            msg.replace("LCURLY", "{").replace("RCURLY", "}"),
+            errorFile, errorLine, re.getColumn(), false);
       }
 
       if (msg.indexOf("expecting RBRACK") != -1) {
@@ -379,9 +335,30 @@ public class JavaBuild {
 
 //      System.err.println("and then she tells me " + tsre.toString());
       // TODO not tested since removing ORO matcher.. ^ could be a problem
-      String mess = "^line (\\d+):(\\d+):\\s";
+      String locationRegex = "^line (\\d+):(\\d+):\\s";
+      String message = tsre.getMessage();
+      String[] m;
 
-      String[] matches = PApplet.match(tsre.toString(), mess);
+      if (null != (m = PApplet.match(tsre.toString(),
+              "unexpected char: (.*)"))) {
+        char c = 0;
+        if (m[1].startsWith("0x")) {     // Hex
+          c = (char) PApplet.unhex(m[1].substring(2));
+        } else if (m[1].length() == 3) { // Quoted
+          c = m[1].charAt(1);
+        } else if (m[1].length() == 1) { // Alone
+          c = m[1].charAt(0);
+        }
+        if (c == '\u201C' || c == '\u201D' || // “”
+            c == '\u2018' || c == '\u2019') { // ‘’
+          message = Language.interpolate("editor.status.bad_curly_quote", c);
+        } else if (c != 0) {
+          message = "Not expecting symbol " + m[1] +
+              ", which is " + Character.getName(c) + ".";
+        }
+      }
+
+      String[] matches = PApplet.match(tsre.toString(), locationRegex);
       if (matches != null) {
         int errorLine = Integer.parseInt(matches[1]) - 1;
         int errorColumn = Integer.parseInt(matches[2]);
@@ -396,7 +373,7 @@ public class JavaBuild {
         }
         errorLine -= sketch.getCode(errorFile).getPreprocOffset();
 
-        throw new SketchException(tsre.getMessage(),
+        throw new SketchException(message,
                                   errorFile, errorLine, errorColumn);
 
       } else {
@@ -419,7 +396,7 @@ public class JavaBuild {
 
     // grab the imports from the code just preprocessed
 
-    importedLibraries = new ArrayList<Library>();
+    importedLibraries = new ArrayList<>();
     Library core = mode.getCoreLibrary();
     if (core != null) {
       importedLibraries.add(core);
@@ -427,26 +404,19 @@ public class JavaBuild {
       javaLibraryPath += File.pathSeparator + core.getNativePath();
     }
 
-//    System.out.println("extra imports: " + result.extraImports);
     for (String item : result.extraImports) {
-//      System.out.println("item = '" + item + "'");
       // remove things up to the last dot
       int dot = item.lastIndexOf('.');
       // http://dev.processing.org/bugs/show_bug.cgi?id=1145
       String entry = (dot == -1) ? item : item.substring(0, dot);
-//      System.out.print(entry + " => ");
 
       if (item.startsWith("static ")) {
         // import static - https://github.com/processing/processing/issues/8
-        // Remove more stuff.
         int dot2 = item.lastIndexOf('.');
         entry = entry.substring(7, (dot2 == -1) ? entry.length() : dot2);
-//        System.out.println(entry);
       }
 
-//      System.out.println("library searching for " + entry);
       Library library = mode.getLibrary(entry);
-//      System.out.println("  found " + library);
 
       if (library != null) {
         if (!importedLibraries.contains(library)) {
@@ -475,7 +445,6 @@ public class JavaBuild {
         }
       }
     }
-//    PApplet.println(PApplet.split(libraryPath, File.pathSeparatorChar));
 
     // Finally, add the regular Java CLASSPATH. This contains everything
     // imported by the PDE itself (core.jar, pde.jar, quaqua.jar) which may
@@ -547,6 +516,7 @@ public class JavaBuild {
     return result.className;
   }
 
+
   /**
    * Returns true if this package isn't part of a library (it's a system import
    * or something like that). Don't bother complaining about java.* or javax.*
@@ -558,25 +528,12 @@ public class JavaBuild {
   protected boolean ignorableImport(String pkg) {
     if (pkg.startsWith("java.")) return true;
     if (pkg.startsWith("javax.")) return true;
+    if (pkg.startsWith("javafx.")) return true;
 
     if (pkg.startsWith("processing.core.")) return true;
     if (pkg.startsWith("processing.data.")) return true;
     if (pkg.startsWith("processing.event.")) return true;
     if (pkg.startsWith("processing.opengl.")) return true;
-
-//    if (pkg.startsWith("com.jogamp.")) return true;
-
-//    // ignore core, data, and opengl packages
-//    String[] coreImports = preprocessor.getCoreImports();
-//    for (int i = 0; i < coreImports.length; i++) {
-//      String imp = coreImports[i];
-//      if (imp.endsWith(".*")) {
-//        imp = imp.substring(0, imp.length() - 2);
-//      }
-//      if (pkg.startsWith(imp)) {
-//        return true;
-//      }
-//    }
 
     return false;
   }
@@ -647,56 +604,6 @@ public class JavaBuild {
   public List<Library> getImportedLibraries() {
     return importedLibraries;
   }
-
-
-  /**
-   * Map an error from a set of processed .java files back to its location
-   * in the actual sketch.
-   * @param message The error message.
-   * @param filename The .java file where the exception was found.
-   * @param line Line number of the .java file for the exception (1-indexed)
-   * @return A RunnerException to be sent to the editor, or null if it wasn't
-   *         possible to place the exception to the sketch code.
-   */
-//  public RunnerException placeExceptionAlt(String message,
-//                                        String filename, int line) {
-//    String appletJavaFile = appletClassName + ".java";
-//    SketchCode errorCode = null;
-//    if (filename.equals(appletJavaFile)) {
-//      for (SketchCode code : getCode()) {
-//        if (code.isExtension("pde")) {
-//          if (line >= code.getPreprocOffset()) {
-//            errorCode = code;
-//          }
-//        }
-//      }
-//    } else {
-//      for (SketchCode code : getCode()) {
-//        if (code.isExtension("java")) {
-//          if (filename.equals(code.getFileName())) {
-//            errorCode = code;
-//          }
-//        }
-//      }
-//    }
-//    int codeIndex = getCodeIndex(errorCode);
-//
-//    if (codeIndex != -1) {
-//      //System.out.println("got line num " + lineNumber);
-//      // in case this was a tab that got embedded into the main .java
-//      line -= getCode(codeIndex).getPreprocOffset();
-//
-//      // lineNumber is 1-indexed, but editor wants zero-indexed
-//      line--;
-//
-//      // getMessage() will be what's shown in the editor
-//      RunnerException exception =
-//        new RunnerException(message, codeIndex, line, -1);
-//      exception.hideStackTrace();
-//      return exception;
-//    }
-//    return null;
-//  }
 
 
   /**
@@ -795,21 +702,31 @@ public class JavaBuild {
         Preferences.getBoolean("export.application.embed_java");
 
       if (Preferences.getBoolean(JavaEditor.EXPORT_PREFIX + platformName)) {
+        final int bits = Platform.getNativeBits();
+        final String arch = Platform.getNativeArch();
+
         if (Library.hasMultipleArch(platform, importedLibraries)) {
-          // export the 32-bit version
-          folder = new File(sketch.getFolder(), "application." + platformName + "32");
-          if (!exportApplication(folder, platform, "32", embedJava && Platform.getNativeBits() == 32 && "x86".equals(Platform.getNativeArch()))) {
-            return false;
+          // Don't try to export 32-bit on macOS, because it doesn't exist.
+          if (platform != PConstants.MACOSX) {
+            // export the 32-bit version
+            folder = new File(sketch.getFolder(), "application." + platformName + "32");
+            if (!exportApplication(folder, platform, "32", embedJava && (bits == 32) && ("x86".equals(arch) || "i386".equals(arch)))) {
+              return false;
+            }
           }
           // export the 64-bit version
           folder = new File(sketch.getFolder(), "application." + platformName + "64");
-          if (!exportApplication(folder, platform, "64", embedJava && Platform.getNativeBits() == 64 && "amd64".equals(Platform.getNativeArch()))) {
+          if (!exportApplication(folder, platform, "64", embedJava && (bits == 64) && "amd64".equals(arch))) {
             return false;
           }
           if (platform == PConstants.LINUX) {
-            // export the armv6hf version as well
+            // export the arm versions as well
             folder = new File(sketch.getFolder(), "application.linux-armv6hf");
-            if (!exportApplication(folder, platform, "armv6hf", embedJava && Platform.getNativeBits() == 32 && "arm".equals(Platform.getNativeArch()))) {
+            if (!exportApplication(folder, platform, "armv6hf", embedJava && (bits == 32) && "arm".equals(arch))) {
+              return false;
+            }
+            folder = new File(sketch.getFolder(), "application.linux-arm64");
+            if (!exportApplication(folder, platform, "arm64", embedJava && (bits == 64) && "aarch64".equals(arch))) {
               return false;
             }
           }
@@ -822,31 +739,6 @@ public class JavaBuild {
       }
     }
 
-    /*
-    File folder = null;
-    String platformName = Base.getPlatformName();
-    boolean embedJava = Preferences.getBoolean("export.application.embed_java");
-    if (Library.hasMultipleArch(PApplet.platform, importedLibraries)) {
-      if (Base.getNativeBits() == 32) {
-        // export the 32-bit version
-        folder = new File(sketch.getFolder(), "application." + platformName + "32");
-        if (!exportApplication(folder, PApplet.platform, 32, embedJava)) {
-          return false;
-        }
-      } else if (Base.getNativeBits() == 64) {
-        // export the 64-bit version
-        folder = new File(sketch.getFolder(), "application." + platformName + "64");
-        if (!exportApplication(folder, PApplet.platform, 64, embedJava)) {
-          return false;
-        }
-      }
-    } else { // just make a single one for this platform
-      folder = new File(sketch.getFolder(), "application." + platformName);
-      if (!exportApplication(folder, PApplet.platform, 0, embedJava)) {
-        return false;
-      }
-    }
-    */
     return true;  // all good
   }
 
@@ -913,7 +805,8 @@ public class JavaBuild {
 
       File macosFolder = new File(contentsFolder, "MacOS");
       macosFolder.mkdirs();
-      Util.copyFile(new File(contentsOrig, "MacOS/Processing"),
+      // This is an unsigned copy of the app binary (see build/build.xml)
+      Util.copyFile(mode.getContentFile("application/mac-app-stub"),
                     new File(contentsFolder, "MacOS/" + sketch.getName()));
 
       File pkgInfo = new File(contentsFolder, "PkgInfo");
@@ -934,30 +827,6 @@ public class JavaBuild {
       Util.copyFile(mode.getContentFile("application/sketch.icns"),
                     new File(resourcesFolder, "sketch.icns"));
 
-      /*
-      String stubName = "Contents/MacOS/JavaApplicationStub";
-      // need to set the stub to executable
-      // will work on osx or *nix, but just dies on windows, oh well..
-      if (Base.isWindows()) {
-        File warningFile = new File(destFolder, "readme.txt");
-        PrintWriter pw = PApplet.createWriter(warningFile);
-        pw.println("This application was created on Windows, which does not");
-        pw.println("properly support setting files as \"executable\",");
-        pw.println("a necessity for applications on Mac OS X.");
-        pw.println();
-        pw.println("To fix this, use the Terminal on Mac OS X, and from this");
-        pw.println("directory, type the following:");
-        pw.println();
-        pw.println("chmod +x " + dotAppFolder.getName() + "/" + stubName);
-        pw.flush();
-        pw.close();
-
-      } else {
-        File stubFile = new File(dotAppFolder, stubName);
-        String stubPath = stubFile.getAbsolutePath();
-        Runtime.getRuntime().exec(new String[] { "chmod", "+x", stubPath });
-      }
-      */
     } else if (exportPlatform == PConstants.LINUX) {
       if (embedJava) {
         Util.copyDirNative(Platform.getJavaHome(), new File(destFolder, "java"));
@@ -975,30 +844,9 @@ public class JavaBuild {
     if (!jarFolder.exists()) jarFolder.mkdirs();
 
 
-    /*
-    /// on windows, copy the exe file
-
-    if (exportPlatform == PConstants.WINDOWS) {
-      if (exportBits == 64) {
-        // We don't yet have a 64-bit launcher, so this is a workaround for now.
-        File batFile = new File(destFolder, sketch.getName() + ".bat");
-        PrintWriter writer = PApplet.createWriter(batFile);
-        writer.println("@echo off");
-        String javaPath = embedJava ? ".\\java\\bin\\java.exe" : "java";
-        writer.println(javaPath + " -Djna.nosys=true -Djava.ext.dirs=lib -Djava.library.path=lib " + sketch.getName());
-        writer.flush();
-        writer.close();
-      } else {
-        Base.copyFile(mode.getContentFile("application/template.exe"),
-                      new File(destFolder, sketch.getName() + ".exe"));
-      }
-    }
-    */
-
-
     /// start copying all jar files
 
-    Vector<String> jarListVector = new Vector<String>();
+    StringList jarList = new StringList();
 
 
     /// create the main .jar file
@@ -1055,7 +903,7 @@ public class JavaBuild {
           File exportFile = new File(codeList[i]);
           String exportFilename = exportFile.getName();
           Util.copyFile(exportFile, new File(jarFolder, exportFilename));
-          jarListVector.add(exportFilename);
+          jarList.append(exportFilename);
         } else {
 //          cp += codeList[i] + File.pathSeparator;
         }
@@ -1065,7 +913,7 @@ public class JavaBuild {
     zos.flush();
     zos.close();
 
-    jarListVector.add(sketch.getName() + ".jar");
+    jarList.append(sketch.getName() + ".jar");
 
 
     /// add contents of 'library' folders to the export
@@ -1085,7 +933,7 @@ public class JavaBuild {
         } else if (exportName.toLowerCase().endsWith(".zip") ||
                    exportName.toLowerCase().endsWith(".jar")) {
           Util.copyFile(exportFile, new File(jarFolder, exportName));
-          jarListVector.add(exportName);
+          jarList.append(exportName);
 
         } else {
           // Starting with 2.0a2 put extra export files (DLLs, plugins folder,
@@ -1098,45 +946,49 @@ public class JavaBuild {
 
     /// create platform-specific CLASSPATH based on included jars
 
-    String jarList[] = new String[jarListVector.size()];
-    jarListVector.copyInto(jarList);
-    StringBuilder exportClassPath = new StringBuilder();
-
+    String exportClassPath = null;
     if (exportPlatform == PConstants.MACOSX) {
-      for (int i = 0; i < jarList.length; i++) {
-        if (i != 0) exportClassPath.append(":");
-        exportClassPath.append("$JAVAROOT/" + jarList[i]);
-      }
+      exportClassPath = "$JAVAROOT/" + jarList.join(":$JAVAROOT/");
     } else if (exportPlatform == PConstants.WINDOWS) {
-      for (int i = 0; i < jarList.length; i++) {
-        if (i != 0) exportClassPath.append(",");
-        exportClassPath.append(jarList[i]);
-      }
-    } else {
-      exportClassPath.append("$APPDIR");
-      for (int i = 0; i < jarList.length; i++) {
-        exportClassPath.append(":$APPDIR/lib/" + jarList[i]);
-      }
+      exportClassPath = jarList.join(",");
+    } else if (exportPlatform == PConstants.LINUX) {
+      // why is $APPDIR at the front of this list?
+      exportClassPath = "$APPDIR" +
+        ":$APPDIR/lib/" + jarList.join(":$APPDIR/lib/");
     }
 
 
     /// figure out run options for the VM
 
-    List<String> runOptions = new ArrayList<String>();
+    StringList runOptions = new StringList();
 
     // Set memory options, except for ARM where we're more memory-constrained
     // compared to the machine being used to build/export the sketch
     // https://github.com/processing/processing/pull/4406
     if (Preferences.getBoolean("run.options.memory") &&
         !exportVariant.equals("armv6hf")) {
-      runOptions.add("-Xms" + Preferences.get("run.options.memory.initial") + "m");
-      runOptions.add("-Xmx" + Preferences.get("run.options.memory.maximum") + "m");
+      runOptions.append("-Xms" + Preferences.get("run.options.memory.initial") + "m");
+      runOptions.append("-Xmx" + Preferences.get("run.options.memory.maximum") + "m");
     }
     // https://github.com/processing/processing/issues/2239
-    runOptions.add("-Djna.nosys=true");
+    runOptions.append("-Djna.nosys=true");
+    // https://github.com/processing/processing/issues/4608
+    if (embedJava) {
+      // if people don't embed Java, it might be a mess, but what can we do?
+      if (exportPlatform == PConstants.MACOSX) {
+        runOptions.append("-Djava.ext.dirs=$APP_ROOT/Contents/PlugIns/jdk" +
+                          PApplet.javaVersionName +
+                          ".jdk/Contents/Home/jre/lib/ext");
+      } else if (exportPlatform == PConstants.WINDOWS) {
+        runOptions.append("-Djava.ext.dirs=\"%EXEDIR%\\java\\lib\\ext\"");
+      } else if (exportPlatform == PConstants.LINUX) {
+        runOptions.append("-Djava.ext.dirs=\"$APPDIR/java/lib/ext\"");
+      }
+    }
+
     // https://github.com/processing/processing/issues/2559
     if (exportPlatform == PConstants.WINDOWS) {
-      runOptions.add("-Djava.library.path=\"%EXEDIR%\\lib\"");
+      runOptions.append("-Djava.library.path=\"%EXEDIR%\\lib\"");
     }
 
 
@@ -1238,35 +1090,12 @@ public class JavaBuild {
       if (embedJava) {
         jre.addChild("path").setContent("java");
       }
-      jre.addChild("minVersion").setContent("1.7.0_40");
+      // Need u74 for a major JavaFX issue (upside-down display)
+      // https://github.com/processing/processing/issues/3795
+      jre.addChild("minVersion").setContent("1.8.0_74");
       for (String opt : runOptions) {
         jre.addChild("opt").setContent(opt);
       }
-
-      /*
-      XML config = launch4j.addChild("config");
-      config.setString("headerType", "gui");
-      File exeFile = new File(destFolder, sketch.getName() + ".exe");
-      config.setString("outfile", exeFile.getAbsolutePath());
-      config.setString("dontWrapJar", "true");
-      config.setString("jarPath", "lib\\" + jarList[0]);
-
-      File iconFile = mode.getContentFile("application/sketch.ico");
-      config.addChild("icon").setContent(iconFile.getAbsolutePath());
-
-      XML clazzPath = config.addChild("classPath");
-      clazzPath.setString("mainClass", sketch.getName());
-      for (int i = 1; i < jarList.length; i++) {
-        String jarName = jarList[i];
-        clazzPath.addChild("cp").setContent("lib\\" + jarName);
-      }
-      XML jre = config.addChild("jre");
-      jre.setString("minVersion", "1.7.0_40");
-      //PApplet.join(runOptions.toArray(new String[0]), " ")
-      for (String opt : runOptions) {
-        jre.addChild("opt").setContent(opt);
-      }
-      */
 
       config.save(configFile);
       project.save(buildFile);
@@ -1284,19 +1113,23 @@ public class JavaBuild {
       // Do the newlines explicitly so that Windows CRLF
       // isn't used when exporting for Unix.
       pw.print("#!/bin/sh\n\n");
-      //ps.print("APPDIR=`dirname $0`\n");
-      pw.print("APPDIR=$(readlink -f \"$0\")\n"); //Allow Symlinks
-      pw.print("APPDIR=$(dirname \"$APPDIR\")\n");  // more posix compliant
+      pw.print("APPDIR=$(readlink -f \"$0\")\n");   // allow symlinks
+      pw.print("APPDIR=$(dirname \"$APPDIR\")\n");  // more POSIX compliant
+
       // another fix for bug #234, LD_LIBRARY_PATH ignored on some platforms
       //ps.print("LD_LIBRARY_PATH=$LD_LIBRARY_PATH:$APPDIR\n");
+
       if (embedJava) {
         // https://github.com/processing/processing/issues/2349
         pw.print("$APPDIR/java/bin/");
       }
-      String runOptionsStr =
-        PApplet.join(runOptions.toArray(new String[0]), " ");
+      String runOptionsStr = runOptions.join(" ");
       pw.print("java " + runOptionsStr +
                " -Djava.library.path=\"$APPDIR:$APPDIR/lib\"" +
+               // these aren't included here since they're added elsewhere
+               // (and only included when Java is embedded)
+               //" -Djava.ext.dirs=\"$APPDIR/java/lib/ext\"" +
+               //" -Djna.nosys=true" +
                " -cp \"" + exportClassPath + "\"" +
                " " + sketch.getName() + " \"$@\"\n");
 

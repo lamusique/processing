@@ -3,7 +3,8 @@
 /*
   Part of the Processing project - http://processing.org
 
-  Copyright (c) 2004-10 Ben Fry and Casey Reas
+  Copyright (c) 2012-19 The Processing Foundation
+  Copyright (c) 2004-12 Ben Fry and Casey Reas
   Copyright (c) 2001-04 Massachusetts Institute of Technology
 
   This program is free software; you can redistribute it and/or modify
@@ -27,33 +28,23 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
 import java.awt.FontMetrics;
-import java.awt.event.*;
-import java.io.*;
-import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.io.OutputStream;
+import java.io.PrintStream;
+import java.util.concurrent.LinkedBlockingQueue;
 
 import javax.swing.*;
 import javax.swing.border.MatteBorder;
 import javax.swing.text.*;
 
-import processing.app.*;
-import processing.core.PApplet;
+import processing.app.Console;
+import processing.app.Mode;
+import processing.app.Preferences;
 
 
 /**
  * Message console that sits below the editing area.
- * <p />
- * Be careful when debugging this class, because if it's throwing exceptions,
- * don't take over System.err, and debug while watching just System.out
- * or just call println() or whatever directly to systemOut or systemErr.
- * <p />
- * Also note that encodings will not work properly when run from Eclipse. This
- * means that if you use non-ASCII characters in a println() or some such,
- * the characters won't print properly in the Processing and/or Eclipse console.
- * It seems that Eclipse's console-grabbing and that of Processing don't
- * get along with one another. Use 'ant run' to work on encoding-related issues.
  */
 public class EditorConsole extends JScrollPane {
   Editor editor;
@@ -67,95 +58,30 @@ public class EditorConsole extends JScrollPane {
   MutableAttributeSet errStyle;
 
   int maxLineCount;
+  int maxCharCount;
 
   PrintStream sketchOut;
   PrintStream sketchErr;
 
-  // Single static instance shared because there's only one real System.out.
-  // Within the input handlers, the currentConsole variable will be used to
-  // echo things to the correct location.
-
-  static PrintStream systemOut;
-  static PrintStream systemErr;
-
-  static PrintStream consoleOut;
-  static PrintStream consoleErr;
-
-  static OutputStream stdoutFile;
-  static OutputStream stderrFile;
-
-  static EditorConsole currentConsole;
-
-  // For 0185, moved the first init to this static { } block, so that we never
-  // have a situation that causes systemOut/Err to not be set properly.
-  static {
-    systemOut = System.out;
-    systemErr = System.err;
-
-    // placing everything inside a try block because this can be a dangerous
-    // time for the lights to blink out and crash for and obscure reason.
-    try {
-      // Create output files that will have a randomized name. Has to
-      // be randomized otherwise another instance of Processing (or one of its
-      // sister IDEs) might collide with the file causing permissions problems.
-      // The files and folders are not deleted on exit because they may be
-      // needed for debugging or bug reporting.
-      SimpleDateFormat formatter = new SimpleDateFormat("yyMMdd");
-      String randy = PApplet.nf((int) (1000 * Math.random()), 4);
-      String stamp = formatter.format(new Date()) + "_" + randy;
-
-      File consoleDir = Base.getSettingsFile("console");
-      consoleDir.mkdirs();
-      File outFile = new File(consoleDir, stamp + ".out");
-      stdoutFile = new FileOutputStream(outFile);
-      File errFile = new File(consoleDir, stamp + ".err");
-      stderrFile = new FileOutputStream(errFile);
-
-      consoleOut = new PrintStream(new EditorConsoleStream(false, null));
-      consoleErr = new PrintStream(new EditorConsoleStream(true, null));
-
-      System.setOut(consoleOut);
-      System.setErr(consoleErr);
-
-//    } catch (Exception e) {
-//      stdoutFile = null;
-//      stderrFile = null;
-//
-//      e.printStackTrace();
-//      Base.showWarning("Console Error",
-//                       "A problem occurred while trying to open the\n" +
-//                       "files used to store the console output.", e);
-    } catch (Exception e) {
-      stdoutFile = null;
-      stderrFile = null;
-
-      consoleOut = null;
-      consoleErr = null;
-
-      System.setOut(systemOut);
-      System.setErr(systemErr);
-
-      e.printStackTrace(systemErr);
-    }
-  }
+  static EditorConsole current;
 
 
   public EditorConsole(Editor editor) {
     this.editor = editor;
 
-    maxLineCount = Preferences.getInteger("console.length");
+    maxLineCount = Preferences.getInteger("console.scrollback.lines");
+    maxCharCount = Preferences.getInteger("console.scrollback.chars");
 
-    consoleDoc = new BufferedStyledDocument(10000, maxLineCount);
+    consoleDoc = new BufferedStyledDocument(10000, maxLineCount, maxCharCount);
     consoleTextPane = new JTextPane(consoleDoc);
     consoleTextPane.setEditable(false);
 
     updateMode();
 
-    // add the jtextpane to this scrollpane
-    this.setViewportView(consoleTextPane);
+    setViewportView(consoleTextPane);
 
-    sketchOut = new PrintStream(new EditorConsoleStream(false, this));
-    sketchErr = new PrintStream(new EditorConsoleStream(true, this));
+    sketchOut = new PrintStream(new EditorConsoleStream(false));
+    sketchErr = new PrintStream(new EditorConsoleStream(true));
 
     startTimer();
   }
@@ -163,7 +89,7 @@ public class EditorConsole extends JScrollPane {
 
   protected void flush() {
     // only if new text has been added
-    if (consoleDoc.hasAppendage) {
+    if (consoleDoc.hasAppendage()) {
       // insert the text that's been added in the meantime
       consoleDoc.insertAll();
       // always move to the end of the text as it's added
@@ -215,7 +141,7 @@ public class EditorConsole extends JScrollPane {
    */
   protected void updateAppearance() {
     String fontFamily = Preferences.get("editor.font.family");
-    int fontSize = Preferences.getInteger("console.font.size");
+    int fontSize = Toolkit.zoom(Preferences.getInteger("console.font.size"));
     StyleConstants.setFontFamily(stdStyle, fontFamily);
     StyleConstants.setFontSize(stdStyle, fontSize);
     StyleConstants.setFontFamily(errStyle, fontFamily);
@@ -282,55 +208,33 @@ public class EditorConsole extends JScrollPane {
 
 
   static public void setEditor(Editor editor) {
-    if (currentConsole != null) {
-      currentConsole.stopTimer();  // allow to be garbage collected
+    if (current != null) {
+      current.stopTimer();  // allow to be garbage collected
     }
-    currentConsole = editor.console;
-    currentConsole.startTimer();
+    editor.console.setCurrent();
   }
 
 
-  /**
-   * Close the streams so that the temporary files can be deleted.
-   * <p/>
-   * File.deleteOnExit() cannot be used because the stdout and stderr
-   * files are inside a folder, and have to be deleted before the
-   * folder itself is deleted, which can't be guaranteed when using
-   * the deleteOnExit() method.
-   */
-  public static void handleQuit() {
-    // replace original streams to remove references to console's streams
-    System.setOut(systemOut);
-    System.setErr(systemErr);
-
-    try {
-      // close the PrintStream
-      if (consoleOut != null) consoleOut.close();
-      if (consoleErr != null) consoleErr.close();
-
-      // also have to close the original FileOutputStream
-      // otherwise it won't be shut down completely
-      if (stdoutFile != null) stdoutFile.close();
-      if (stderrFile != null) stderrFile.close();
-
-    } catch (IOException e) {
-      e.printStackTrace(systemErr);
-    }
+  void setCurrent() {
+    current = this;  //editor.console;
+    startTimer();
+    Console.setEditor(sketchOut, sketchErr);
   }
 
 
-  synchronized public void message(String what, boolean err) {
-    if (err) {
-      systemErr.print(what);
-    } else {
-      systemOut.print(what);
-    }
-
+  public void message(String what, boolean err) {
     if (err && (what.contains("invalid context 0x0") || (what.contains("invalid drawable")))) {
       // Respectfully declining... This is a quirk of more recent releases of
       // Java on Mac OS X, but is widely reported as the source of any other
       // bug or problem that a user runs into. It may well be a Processing
       // bug, but until we know, we're suppressing the messages.
+    } else if (err && what.contains("is calling TIS/TSM in non-main thread environment")) {
+      // Error message caused by JOGL since macOS 10.13.4, cannot fix at the moment so silencing it:
+      // https://github.com/processing/processing/issues/5462
+      // Some discussion on the Apple's developer forums seems to suggest that is not serious:
+      // https://forums.developer.apple.com/thread/105244
+    } else if (err && what.contains("NSWindow drag regions should only be invalidated on the Main Thread")) {
+      // Keep hiding warnings triggered by JOGL on recent macOS versions (this is from 10.14 onwards I think).
     } else if (err && what.contains("Make pbuffer:")) {
       // Remove initalization warning from LWJGL.
     } else if (err && what.contains("XInitThreads() called for concurrent")) {
@@ -365,53 +269,20 @@ public class EditorConsole extends JScrollPane {
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
 
-  private static class EditorConsoleStream extends OutputStream {
-    final boolean err; // whether stderr or stdout
-    final byte single[] = new byte[1];
-    EditorConsole console;
+  class EditorConsoleStream extends OutputStream {
+    boolean err;
 
-    public EditorConsoleStream(boolean err, EditorConsole console) {
+    public EditorConsoleStream(boolean err) {
       this.err = err;
-      this.console = console;
-    }
-
-    public void close() { }
-
-    public void flush() { }
-
-    public void write(byte b[]) {  // appears never to be used
-      write(b, 0, b.length);
     }
 
     public void write(byte b[], int offset, int length) {
-      if (console != null) {
-        console.message(new String(b, offset, length), err);
-      } else if (currentConsole != null) {
-        currentConsole.message(new String(b, offset, length), err);
-      } else {
-        // If no console is present, still need to write this to the actual
-        // System.out or System.err. Otherwise we can't !#$!% debug anything.
-        if (err) {
-          systemErr.write(b, offset, length);
-        } else {
-          systemOut.write(b, offset, length);
-        }
-      }
-
-      final OutputStream echo = err ? stderrFile : stdoutFile;
-      if (echo != null) {
-        try {
-          echo.write(b, offset, length);
-          echo.flush();
-        } catch (IOException e) {
-          e.printStackTrace();
-        }
-      }
+      message(new String(b, offset, length), err);
     }
 
+    // doesn't appear to be called (but must be implemented)
     public void write(int b) {
-      single[0] = (byte) b;
-      write(single, 0, 1);
+      write(new byte[] { (byte) b }, 0, 1);
     }
   }
 }
@@ -428,22 +299,32 @@ public class EditorConsole extends JScrollPane {
  * swing event thread, so they need to be synchronized
  */
 class BufferedStyledDocument extends DefaultStyledDocument {
-  List<ElementSpec> elements = new ArrayList<ElementSpec>();
-  int maxLineLength, maxLineCount;
+  //List<ElementSpec> elements = new ArrayList<>();
+  LinkedBlockingQueue<ElementSpec> elements;
+//  AtomicInteger queuedLineCount = new AtomicInteger();
+  int maxLineLength, maxLineCount, maxCharCount;
   int currentLineLength = 0;
   boolean needLineBreak = false;
-  boolean hasAppendage = false;
+//  boolean hasAppendage = false;
+  final Object insertLock = new Object();
 
-  public BufferedStyledDocument(int maxLineLength, int maxLineCount) {
+  public BufferedStyledDocument(int maxLineLength, int maxLineCount,
+                                int maxCharCount) {
     this.maxLineLength = maxLineLength;
     this.maxLineCount = maxLineCount;
+    this.maxCharCount = maxCharCount;
+    elements = new LinkedBlockingQueue<>();
+  }
+
+  // monitor this so that it's only updated when needed (otherwise console
+  // updates every 250 ms when an app isn't even running.. see bug 180)
+  public boolean hasAppendage() {
+    return elements.size() > 0;
   }
 
   /** buffer a string for insertion at the end of the DefaultStyledDocument */
-  public synchronized void appendString(String str, AttributeSet a) {
-    // do this so that it's only updated when needed (otherwise console
-    // updates every 250 ms when an app isn't even running.. see bug 180)
-    hasAppendage = true;
+  public void appendString(String str, AttributeSet a) {
+//    hasAppendage = true;
 
     // process each line of the string
     while (str.length() > 0) {
@@ -452,6 +333,7 @@ class BufferedStyledDocument extends DefaultStyledDocument {
       if (needLineBreak || currentLineLength > maxLineLength) {
         elements.add(new ElementSpec(a, ElementSpec.EndTagType));
         elements.add(new ElementSpec(a, ElementSpec.StartTagType));
+//        queuedLineCount.incrementAndGet();
         currentLineLength = 0;
       }
 
@@ -467,15 +349,42 @@ class BufferedStyledDocument extends DefaultStyledDocument {
         needLineBreak = true;
         str = str.substring(str.indexOf('\n') + 1); // eat the line
       }
+      /*
+      while (queuedLineCount.get() > maxLineCount) {
+        Console.systemOut("too many: " + queuedLineCount);
+        ElementSpec elem = elements.remove();
+        if (elem.getType() == ElementSpec.EndTagType) {
+          queuedLineCount.decrementAndGet();
+        }
+      }
+      */
+    }
+    if (elements.size() > 1000) {
+      insertAll();
     }
   }
 
   /** insert the buffered strings */
-  public synchronized void insertAll() {
-    ElementSpec[] elementArray = new ElementSpec[elements.size()];
-    elements.toArray(elementArray);
+  public void insertAll() {
+    /*
+    // each line is ~3 elements
+    int tooMany = elements.size() - maxLineCount*3;
+    if (tooMany > 0) {
+      try {
+        remove(0, getLength()); // clear the document first
+      } catch (BadLocationException ble) {
+        ble.printStackTrace();
+      }
+      Console.systemOut("skipping " + elements.size());
+      for (int i = 0; i < tooMany; i++) {
+        elements.remove();
+      }
+    }
+    */
+    ElementSpec[] elementArray = elements.toArray(new ElementSpec[0]);
 
     try {
+      /*
       // check how many lines have been used so far
       // if too many, shave off a few lines from the beginning
       Element element = super.getDefaultRootElement();
@@ -492,13 +401,42 @@ class BufferedStyledDocument extends DefaultStyledDocument {
         // remove to the end of the 200th line
         super.remove(0, endOffset);
       }
-      super.insert(super.getLength(), elementArray);
+      */
+      synchronized (insertLock) {
+        checkLength();
+        insert(getLength(), elementArray);
+        checkLength();
+      }
 
     } catch (BadLocationException e) {
       // ignore the error otherwise this will cause an infinite loop
       // maybe not a good idea in the long run?
     }
     elements.clear();
-    hasAppendage = false;
+//    hasAppendage = false;
+  }
+
+  private void checkLength() throws BadLocationException {
+    // set a limit on the number of characters in the console
+    int docLength = getLength();
+    if (docLength > maxCharCount) {
+      remove(0, docLength - maxCharCount);
+    }
+    // check how many lines have been used so far
+    // if too many, shave off a few lines from the beginning
+    Element element = super.getDefaultRootElement();
+    int lineCount = element.getElementCount();
+    int overage = lineCount - maxLineCount;
+    if (overage > 0) {
+      // if 1200 lines, and 1000 lines is max,
+      // find the position of the end of the 200th line
+      //systemOut.println("overage is " + overage);
+      Element lineElement = element.getElement(overage);
+      if (lineElement != null) {
+        int endOffset = lineElement.getEndOffset();
+        // remove to the end of the 200th line
+        super.remove(0, endOffset);
+      }
+    }
   }
 }

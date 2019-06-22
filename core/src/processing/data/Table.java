@@ -378,6 +378,15 @@ public class Table {
     } else {
       InputStreamReader isr = new InputStreamReader(input, encoding);
       BufferedReader reader = new BufferedReader(isr);
+
+      // strip out the Unicode BOM, if present
+      reader.mark(1);
+      int c = reader.read();
+      // if not the BOM, back up to the beginning again
+      if (c != '\uFEFF') {
+        reader.reset();
+      }
+
       /*
        if (awfulCSV) {
         parseAwfulCSV(reader, header);
@@ -548,7 +557,7 @@ public class Table {
   */
 
 
-  class CommaSeparatedLine {
+  static class CommaSeparatedLine {
     char[] c;
     String[] pieces;
     int pieceCount;
@@ -671,6 +680,12 @@ public class Table {
               addPiece(start, i, hasEscapedQuotes);
               start = i+2;
               return true;
+
+            } else {
+              // This is a lone-wolf quote, occasionally seen in exports.
+              // It's a single quote in the middle of some other text,
+              // and not escaped properly. Pray for the best!
+              i++;
             }
 
           } else {  // not a quoted line
@@ -739,76 +754,6 @@ public class Table {
     }
     return csl.handle(line, reader);
   }
-  /*
-  static protected String[] splitLineCSV(String line, BufferedReader reader) throws IOException {
-    char[] c = line.toCharArray();
-
-    // get tally of number of columns and allocate the array
-    int cols = 1;  // the first comma indicates the second column
-    boolean quote = false;
-    for (int i = 0; i < c.length; i++) {
-      if (!quote && (c[i] == ',')) {
-        cols++;
-      } else if (c[i] == '\"') {
-        // double double quotes (escaped quotes like "") will simply toggle
-        // this back and forth, so it should remain accurate
-        quote = !quote;
-      }
-    }
-    String[] pieces = new String[cols];
-
-    // now do actual parsing
-    int pieceCount = 0;
-    int offset = 0;
-    while (offset < c.length) {
-      int start = offset;
-      int stop = nextComma(c, offset);
-      while (stop == -1) {
-        // found a newline inside the quote, grab another line
-        String nextLine = reader.readLine();
-        System.out.println("extending to " + nextLine);
-        if (nextLine == null) {
-          System.err.println(line);
-          throw new IOException("Found a quoted line that wasn't terminated properly.");
-        }
-        char[] temp = new char[c.length + 1 + nextLine.length()];
-        PApplet.arrayCopy(c, temp, c.length);
-        // NOTE: we're converting to \n here, which isn't perfect
-        temp[c.length] = '\n';
-        line.getChars(0, nextLine.length(), temp, c.length + 1);
-        c = temp;
-        stop = nextComma(c, offset);
-        System.out.println("stop is now " + stop);
-      }
-      offset = stop + 1;  // next time around, need to step over the comment
-      if (c[start] == '\"' && c[stop-1] == '\"') {
-        start++;
-        stop--;
-      }
-      int i = start;
-      int ii = start;
-      while (i < stop) {
-        if (c[i] == '\"') {
-          i++;  // skip over pairs of double quotes become one
-        }
-        if (i != ii) {
-          c[ii] = c[i];
-        }
-        i++;
-        ii++;
-      }
-      String s = new String(c, start, ii - start);
-      pieces[pieceCount++] = s;
-    }
-    // Make any remaining entries blanks instead of nulls. Empty columns from
-    // CSV are always "" not null, so this handles successive commas in a line
-    for (int i = pieceCount; i < pieces.length; i++) {
-      pieces[i] = "";
-
-    }
-    return pieces;
-  }
-  */
 
 
   /**
@@ -1131,7 +1076,7 @@ public class Table {
     }
 
     Field[] fields = target.getDeclaredFields();
-    ArrayList<Field> inuse = new ArrayList<Field>();
+    ArrayList<Field> inuse = new ArrayList<>();
     for (Field field : fields) {
       String name = field.getName();
       if (getColumnIndex(name, false) != -1) {
@@ -1860,7 +1805,7 @@ public class Table {
 
 
   /**
-   * @param type the type to be used for the new column: INT, LONG, FLOAT, DOUBLE, STRING, or CATEGORY
+   * @param type the type to be used for the new column: INT, LONG, FLOAT, DOUBLE, or STRING
    */
   public void addColumn(String title, int type) {
     insertColumn(columns.length, title, type);
@@ -2000,12 +1945,7 @@ public class Table {
   }
 
 
-  /**
-   * Set the data type for a column so that using it is more efficient.
-   * @param column the column to change
-   * @param columnType One of int, long, float, double, string, or category.
-   */
-  public void setColumnType(int column, String columnType) {
+  static int parseColumnType(String columnType) {
     columnType = columnType.toLowerCase();
     int type = -1;
     if (columnType.equals("string")) {
@@ -2023,7 +1963,17 @@ public class Table {
     } else {
       throw new IllegalArgumentException("'" + columnType + "' is not a valid column type.");
     }
-    setColumnType(column, type);
+    return type;
+  }
+
+
+  /**
+   * Set the data type for a column so that using it is more efficient.
+   * @param column the column to change
+   * @param columnType One of int, long, float, double, string, or category.
+   */
+  public void setColumnType(int column, String columnType) {
+    setColumnType(column, parseColumnType(columnType));
   }
 
 
@@ -2265,7 +2215,7 @@ public class Table {
     // only create this on first get(). subsequent calls to set the title will
     // also update this array, but only if it exists.
     if (columnIndices == null) {
-      columnIndices = new HashMap<String, Integer>();
+      columnIndices = new HashMap<>();
       for (int col = 0; col < columns.length; col++) {
         columnIndices.put(columnTitles[col], col);
       }
@@ -2478,9 +2428,12 @@ public class Table {
         }
       }
     }
+    // Need to increment before setRow(), because it calls ensureBounds()
+    // https://github.com/processing/processing/issues/5406
+    ++rowCount;
     setRow(insert, columnData);
-    rowCount++;
   }
+
 
   /**
    * @webref table:method
@@ -4098,16 +4051,77 @@ public class Table {
 
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
+
   /**
    * @webref table:method
    * @brief Trims whitespace from values
    * @see Table#removeTokens(String)
    */
   public void trim() {
+    columnTitles = PApplet.trim(columnTitles);
     for (int col = 0; col < getColumnCount(); col++) {
       trim(col);
     }
+    // remove empty columns
+    int lastColumn = getColumnCount() - 1;
+    //while (isEmptyColumn(lastColumn) && lastColumn >= 0) {
+    while (isEmptyArray(getStringColumn(lastColumn)) && lastColumn >= 0) {
+      lastColumn--;
+    }
+    setColumnCount(lastColumn + 1);
+
+    // trim() works from both sides
+    while (getColumnCount() > 0 && isEmptyArray(getStringColumn(0))) {
+      removeColumn(0);
+    }
+
+    // remove empty rows (starting from the end)
+    int lastRow = lastRowIndex();
+    //while (isEmptyRow(lastRow) && lastRow >= 0) {
+    while (isEmptyArray(getStringRow(lastRow)) && lastRow >= 0) {
+      lastRow--;
+    }
+    setRowCount(lastRow + 1);
+
+    while (getRowCount() > 0 && isEmptyArray(getStringRow(0))) {
+      removeRow(0);
+    }
   }
+
+
+  protected boolean isEmptyArray(String[] contents) {
+    for (String entry : contents) {
+      if (entry != null && entry.length() > 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+
+  /*
+  protected boolean isEmptyColumn(int column) {
+    String[] contents = getStringColumn(column);
+    for (String entry : contents) {
+      if (entry != null && entry.length() > 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+
+  protected boolean isEmptyRow(int row) {
+    String[] contents = getStringRow(row);
+    for (String entry : contents) {
+      if (entry != null && entry.length() > 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+  */
+
 
   /**
    * @param column ID number of the column to trim
@@ -4184,8 +4198,8 @@ public class Table {
 
 
   static class HashMapBlows {
-    HashMap<String,Integer> dataToIndex = new HashMap<String, Integer>();
-    ArrayList<String> indexToData = new ArrayList<String>();
+    HashMap<String,Integer> dataToIndex = new HashMap<>();
+    ArrayList<String> indexToData = new ArrayList<>();
 
     HashMapBlows() { }
 
@@ -4244,7 +4258,7 @@ public class Table {
     void read(DataInputStream input) throws IOException {
       int count = input.readInt();
       //System.out.println("found " + count + " entries in category map");
-      dataToIndex = new HashMap<String, Integer>(count);
+      dataToIndex = new HashMap<>(count);
       for (int i = 0; i < count; i++) {
         String str = input.readUTF();
         //System.out.println(i + " " + str);
@@ -4279,12 +4293,21 @@ public class Table {
 
   // . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
 
-
+  /**
+   * Sorts (orders) a table based on the values in a column.
+   *
+   * @webref table:method
+   * @brief Orders a table based on the values in a column
+   * @param columnName the name of the column to sort
+   * @see Table#trim()
+   */
   public void sort(String columnName) {
     sort(getColumnIndex(columnName), false);
   }
 
-
+  /**
+   * @param column the column ID, e.g. 0, 1, 2
+   */
   public void sort(int column) {
     sort(column, false);
   }
@@ -4310,7 +4333,7 @@ public class Table {
       }
 
       @Override
-      public float compare(int index1, int index2) {
+      public int compare(int index1, int index2) {
         int a = reverse ? order[index2] : order[index1];
         int b = reverse ? order[index1] : order[index2];
 
@@ -4318,13 +4341,24 @@ public class Table {
         case INT:
           return getInt(a, column) - getInt(b, column);
         case LONG:
-          return getLong(a, column) - getLong(b, column);
+          long diffl = getLong(a, column) - getLong(b, column);
+          return diffl == 0 ? 0 : (diffl < 0 ? -1 : 1);
         case FLOAT:
-          return getFloat(a, column) - getFloat(b, column);
+          float difff = getFloat(a, column) - getFloat(b, column);
+          return difff == 0 ? 0 : (difff < 0 ? -1 : 1);
         case DOUBLE:
-          return (float) (getDouble(a, column) - getDouble(b, column));
+          double diffd = getDouble(a, column) - getDouble(b, column);
+          return diffd == 0 ? 0 : (diffd < 0 ? -1 : 1);
         case STRING:
-          return getString(a, column).compareToIgnoreCase(getString(b, column));
+          String string1 = getString(a, column);
+          if (string1 == null) {
+            string1 = "";  // avoid NPE when cells are left empty
+          }
+          String string2 = getString(b, column);
+          if (string2 == null) {
+            string2 = "";
+          }
+          return string1.compareToIgnoreCase(string2);
         case CATEGORY:
           return getInt(a, column) - getInt(b, column);
         default:
@@ -4483,19 +4517,52 @@ public class Table {
 
   public FloatDict getFloatDict(int keyColumn, int valueColumn) {
     return new FloatDict(getStringColumn(keyColumn),
-                       getFloatColumn(valueColumn));
+                         getFloatColumn(valueColumn));
   }
 
 
   public StringDict getStringDict(String keyColumnName, String valueColumnName) {
     return new StringDict(getStringColumn(keyColumnName),
-                         getStringColumn(valueColumnName));
+                          getStringColumn(valueColumnName));
   }
 
 
   public StringDict getStringDict(int keyColumn, int valueColumn) {
     return new StringDict(getStringColumn(keyColumn),
                           getStringColumn(valueColumn));
+  }
+
+
+  public Map<String, TableRow> getRowMap(String columnName) {
+    int col = getColumnIndex(columnName);
+    return (col == -1) ? null : getRowMap(col);
+  }
+
+
+  /**
+   * Return a mapping that connects the entry from a column back to the row
+   * from which it came. For instance:
+   * <pre>
+   * Table t = loadTable("country-data.tsv", "header");
+   * // use the contents of the 'country' column to index the table
+   * Map<String, TableRow> lookup = t.getRowMap("country");
+   * // get the row that has "us" in the "country" column:
+   * TableRow usRow = lookup.get("us");
+   * // get an entry from the 'population' column
+   * int population = usRow.getInt("population");
+   * </pre>
+   */
+  public Map<String, TableRow> getRowMap(int column) {
+    Map<String, TableRow> outgoing = new HashMap<>();
+    for (int row = 0; row < getRowCount(); row++) {
+      String id = getString(row, column);
+      outgoing.put(id, new RowPointer(this, row));
+    }
+//    for (TableRow row : rows()) {
+//      String id = row.getString(column);
+//      outgoing.put(id, row);
+//    }
+    return outgoing;
   }
 
 

@@ -1,5 +1,7 @@
 package processing.data;
 
+import java.io.File;
+import java.io.PrintWriter;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.Random;
@@ -596,11 +598,23 @@ public class IntList implements Iterable<Integer> {
 
 
   public int sum() {
-    int outgoing = 0;
-    for (int i = 0; i < count; i++) {
-      outgoing += data[i];
+    long amount = sumLong();
+    if (amount > Integer.MAX_VALUE) {
+      throw new RuntimeException("sum() exceeds " + Integer.MAX_VALUE + ", use sumLong()");
     }
-    return outgoing;
+    if (amount < Integer.MIN_VALUE) {
+      throw new RuntimeException("sum() less than " + Integer.MIN_VALUE + ", use sumLong()");
+    }
+    return (int) amount;
+  }
+
+
+  public long sumLong() {
+    long sum = 0;
+    for (int i = 0; i < count; i++) {
+      sum += data[i];
+    }
+    return sum;
   }
 
 
@@ -629,7 +643,7 @@ public class IntList implements Iterable<Integer> {
       }
 
       @Override
-      public float compare(int a, int b) {
+      public int compare(int a, int b) {
         return data[b] - data[a];
       }
 
@@ -840,6 +854,19 @@ public class IntList implements Iterable<Integer> {
   }
 
 
+//  /**
+//   * Count the number of times each entry is found in this list.
+//   * Converts each entry to a String so it can be used as a key.
+//   */
+//  public IntDict getTally() {
+//    IntDict outgoing = new IntDict();
+//    for (int i = 0; i < count; i++) {
+//      outgoing.increment(String.valueOf(data[i]));
+//    }
+//    return outgoing;
+//  }
+
+
   public IntList getSubset(int start) {
     return getSubset(start, count - start);
   }
@@ -867,23 +894,43 @@ public class IntList implements Iterable<Integer> {
 
 
   public void print() {
-    for (int i = 0; i < size(); i++) {
+    for (int i = 0; i < count; i++) {
       System.out.format("[%d] %d%n", i, data[i]);
     }
   }
 
 
+  /**
+   * Save tab-delimited entries to a file (TSV format, UTF-8 encoding)
+   */
+  public void save(File file) {
+    PrintWriter writer = PApplet.createWriter(file);
+    write(writer);
+    writer.close();
+  }
+
+
+  /**
+   * Write entries to a PrintWriter, one per line
+   */
+  public void write(PrintWriter writer) {
+    for (int i = 0; i < count; i++) {
+      writer.println(data[i]);
+    }
+    writer.flush();
+  }
+
+
+  /**
+   * Return this dictionary as a String in JSON format.
+   */
+  public String toJSON() {
+    return "[ " + join(", ") + " ]";
+  }
+
+
   @Override
   public String toString() {
-    StringBuilder sb = new StringBuilder();
-    sb.append(getClass().getSimpleName() + " size=" + size() + " [ ");
-    for (int i = 0; i < size(); i++) {
-      if (i != 0) {
-        sb.append(", ");
-      }
-      sb.append(i + ": " + data[i]);
-    }
-    sb.append(" ]");
-    return sb.toString();
+    return getClass().getSimpleName() + " size=" + size() + " " + toJSON();
   }
 }

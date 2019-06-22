@@ -30,10 +30,6 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
-import java.util.logging.FileHandler;
-import java.util.logging.Handler;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 
 import javax.swing.SwingUtilities;
 
@@ -56,7 +52,7 @@ public class JavaMode extends Mode {
   public JavaMode(Base base, File folder) {
     super(base, folder);
 
-    initLogger();
+//    initLogger();
     loadPreferences();
   }
 
@@ -148,13 +144,6 @@ public class JavaMode extends Mode {
 //                            final boolean present) throws SketchException {
     final JavaEditor editor = (JavaEditor) listener;
 
-    if (isSketchModified(sketch)) {
-      editor.deactivateRun();
-      Messages.showMessage(Language.text("menu.file.save"),
-                           Language.text("tweak_mode.save_before_tweak"));
-      return null;
-    }
-
     // first try to build the unmodified code
     JavaBuild build = new JavaBuild(sketch);
 //    String appletClassName = build.build(false);
@@ -218,6 +207,7 @@ public class JavaMode extends Mode {
   }
 
 
+  /*
   // TODO Why is this necessary? Why isn't Sketch.isModified() used?
   static private boolean isSketchModified(Sketch sketch) {
     for (SketchCode sc : sketch.getCode()) {
@@ -227,6 +217,7 @@ public class JavaMode extends Mode {
     }
     return false;
   }
+  */
 
 
 //  public void handleStop() {
@@ -263,7 +254,7 @@ public class JavaMode extends Mode {
 
   // Merged from ExperimentalMode
 
-
+  /*
   void initLogger() {
     final boolean VERBOSE_LOGGING = true;
     final int LOG_SIZE = 512 * 1024; // max log file size (in bytes)
@@ -293,6 +284,7 @@ public class JavaMode extends Mode {
       Logger.getLogger(JavaMode.class.getName()).log(Level.SEVERE, null, ex);
     }
   }
+  */
 
 
   //ImageIcon classIcon, fieldIcon, methodIcon, localVarIcon;

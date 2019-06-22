@@ -22,6 +22,8 @@
 
 package processing.javafx;
 
+import com.sun.glass.ui.Screen;
+
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
@@ -30,6 +32,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.SynchronousQueue;
 
 import javafx.animation.Animation;
 import javafx.animation.KeyFrame;
@@ -71,6 +74,8 @@ public class PSurfaceFX implements PSurface {
   final Animation animation;
   float frameRate = 60;
 
+  private SynchronousQueue<Throwable> drawExceptionQueue = new SynchronousQueue<>();
+
   public PSurfaceFX(PGraphicsFX2D graphics) {
     fx = graphics;
     canvas = new ResizableCanvas();
@@ -80,7 +85,16 @@ public class PSurfaceFX implements PSurface {
                                      new EventHandler<ActionEvent>() {
       public void handle(ActionEvent event) {
         long startNanoTime = System.nanoTime();
-        sketch.handleDraw();
+        try {
+          sketch.handleDraw();
+        } catch (Throwable e) {
+          // Let exception handler thread crash with our exception
+          drawExceptionQueue.offer(e);
+          // Stop animating right now so nothing runs afterwards
+          // and crash frame can be for example traced by println()
+          animation.stop();
+          return;
+        }
         long drawNanos = System.nanoTime() - startNanoTime;
 
         if (sketch.exitCalled()) {
@@ -232,6 +246,19 @@ public class PSurfaceFX implements PSurface {
 
       PApplet sketch = surface.sketch;
 
+      float renderScale = Screen.getMainScreen().getRenderScale();
+      if (PApplet.platform == PConstants.MACOSX) {
+        for (Screen s : Screen.getScreens()) {
+          renderScale = Math.max(renderScale, s.getRenderScale());
+        }
+      }
+      float uiScale = Screen.getMainScreen().getUIScale();
+      if (sketch.pixelDensity == 2 && renderScale < 2) {
+        sketch.pixelDensity = 1;
+        sketch.g.pixelDensity = 1;
+        System.err.println("pixelDensity(2) is not available for this display");
+      }
+
       // Use AWT display code, because FX orders screens in different way
       GraphicsDevice displayDevice = null;
 
@@ -245,7 +272,7 @@ public class PSurfaceFX implements PSurface {
           displayDevice = devices[displayNum - 1];
         } else {
           System.err.format("Display %d does not exist, " +
-                                "using the default display instead.%n", displayNum);
+                            "using the default display instead.%n", displayNum);
           for (int i = 0; i < devices.length; i++) {
             System.err.format("Display %d is %s%n", (i+1), devices[i]);
           }
@@ -274,17 +301,8 @@ public class PSurfaceFX implements PSurface {
             maxY = Math.max(maxY, bounds.getMaxY());
           }
         }
-        if (minY < 0) {
-          // FX can't handle this
-          System.err.format("FX can't place window at negative Y coordinate " +
-                                "[x=%d, y=%d]. Please make sure that your secondary " +
-                                "display does not extend above the main display.",
-                            (int) minX, (int) minY);
-          screenRect = primaryScreenRect;
-        } else {
-          screenRect = new Rectangle((int) minX, (int) minY,
-                                     (int) (maxX - minX), (int) (maxY - minY));
-        }
+        screenRect = new Rectangle((int) minX, (int) minY,
+                                   (int) (maxX - minX), (int) (maxY - minY));
       }
 
       // Set the displayWidth/Height variables inside PApplet, so that they're
@@ -296,14 +314,14 @@ public class PSurfaceFX implements PSurface {
       int sketchHeight = sketch.sketchHeight();
 
       if (fullScreen || spanDisplays) {
-        sketchWidth = (int) screenRect.getWidth();
-        sketchHeight = (int) screenRect.getHeight();
+        sketchWidth = (int) (screenRect.getWidth() / uiScale);
+        sketchHeight = (int) (screenRect.getHeight() / uiScale);
 
         stage.initStyle(StageStyle.UNDECORATED);
-        stage.setX(screenRect.getMinX());
-        stage.setY(screenRect.getMinY());
-        stage.setWidth(screenRect.getWidth());
-        stage.setHeight(screenRect.getHeight());
+        stage.setX(screenRect.getMinX() / uiScale);
+        stage.setY(screenRect.getMinY() / uiScale);
+        stage.setWidth(screenRect.getWidth() / uiScale);
+        stage.setHeight(screenRect.getHeight() / uiScale);
       }
 
       Canvas canvas = surface.canvas;
@@ -366,7 +384,37 @@ public class PSurfaceFX implements PSurface {
       } catch (InterruptedException e) { }
     }
 
+    startExceptionHandlerThread();
+
     setProcessingIcon(stage);
+  }
+
+
+  private void startExceptionHandlerThread() {
+    Thread exceptionHandlerThread = new Thread(() -> {
+      Throwable drawException;
+      try {
+        drawException = drawExceptionQueue.take();
+      } catch (InterruptedException e) {
+        return;
+      }
+      // Adapted from PSurfaceJOGL
+      if (drawException != null) {
+        if (drawException instanceof ThreadDeath) {
+//            System.out.println("caught ThreadDeath");
+//            throw (ThreadDeath)cause;
+        } else if (drawException instanceof RuntimeException) {
+          throw (RuntimeException) drawException;
+        } else if (drawException instanceof UnsatisfiedLinkError) {
+          throw new UnsatisfiedLinkError(drawException.getMessage());
+        } else {
+          throw new RuntimeException(drawException);
+        }
+      }
+    });
+    exceptionHandlerThread.setDaemon(true);
+    exceptionHandlerThread.setName("Processing-FX-ExceptionHandler");
+    exceptionHandlerThread.start();
   }
 
 
@@ -498,14 +546,11 @@ public class PSurfaceFX implements PSurface {
   public void placeWindow(int[] location, int[] editorLocation) {
     if (sketch.sketchFullScreen()) {
       PApplet.hideMenuBar();
+      return;
     }
 
-    //Dimension window = setFrameSize();
-//    int contentW = Math.max(sketchWidth, MIN_WINDOW_WIDTH);
-//    int contentH = Math.max(sketchHeight, MIN_WINDOW_HEIGHT);
-//    System.out.println("stage size is " + stage.getWidth() + " " + stage.getHeight());
     int wide = sketch.width;  // stage.getWidth() is NaN here
-    int high = sketch.height;  // stage.getHeight()
+    //int high = sketch.height;  // stage.getHeight()
 
     if (location != null) {
       // a specific location was received from the Runner
@@ -523,42 +568,10 @@ public class PSurfaceFX implements PSurface {
         stage.setY(locationY);
 
       } else {  // doesn't fit
-//        // if it fits inside the editor window,
-//        // offset slightly from upper lefthand corner
-//        // so that it's plunked inside the text area
-//        locationX = editorLocation[0] + 66;
-//        locationY = editorLocation[1] + 66;
-//
-//        if ((locationX + stage.getWidth() > sketch.displayWidth - 33) ||
-//            (locationY + stage.getHeight() > sketch.displayHeight - 33)) {
-//          // otherwise center on screen
-//        locationX = (int) ((sketch.displayWidth - wide) / 2);
-//        locationY = (int) ((sketch.displayHeight - high) / 2);
-//        }
-        locationX = (sketch.displayWidth - wide) / 2;
-        locationY = (sketch.displayHeight - high) / 2;
-        stage.setX(locationX);
-        stage.setY(locationY);
+        stage.centerOnScreen();
       }
     } else {  // just center on screen
-      //setFrameCentered();
-    }
-    if (stage.getY() < 0) {
-      // Windows actually allows you to place frames where they can't be
-      // closed. Awesome. http://dev.processing.org/bugs/show_bug.cgi?id=1508
-      //frame.setLocation(frameLoc.x, 30);
-      stage.setY(30);
-    }
-
-    //canvas.setBounds((contentW - sketchWidth)/2,
-    //                 (contentH - sketchHeight)/2,
-    //                 sketchWidth, sketchHeight);
-
-    // handle frame resizing events
-    //setupFrameResizeListener();
-
-    if (sketch.getGraphics().displayable()) {
-      setVisible(true);
+      stage.centerOnScreen();
     }
   }
 
@@ -603,14 +616,24 @@ public class PSurfaceFX implements PSurface {
   }
 
 
-  public void setSize(int width, int height) {
+  public void setSize(int wide, int high) {
+    // When the surface is set to resizable via surface.setResizable(true),
+    // a crash may occur if the user sets the window to size zero.
+    // https://github.com/processing/processing/issues/5052
+    if (high <= 0) {
+      high = 1;
+    }
+    if (wide <= 0) {
+      wide = 1;
+    }
+
     //System.out.format("%s.setSize(%d, %d)%n", getClass().getSimpleName(), width, height);
     Scene scene = stage.getScene();
     double decorH = stage.getWidth() - scene.getWidth();
     double decorV = stage.getHeight() - scene.getHeight();
-    stage.setWidth(width + decorH);
-    stage.setHeight(height + decorV);
-    fx.setSize(width, height);
+    stage.setWidth(wide + decorH);
+    stage.setHeight(high + decorV);
+    fx.setSize(wide, high);
   }
 
 
@@ -806,11 +829,6 @@ public class PSurfaceFX implements PSurface {
     int count = fxEvent.getClickCount();
 
     int action = mouseMap.get(fxEvent.getEventType());
-    //EventType<? extends MouseEvent> et = nativeEvent.getEventType();
-//    if (et == MouseEvent.MOUSE_PRESSED) {
-//      peAction = processing.event.MouseEvent.PRESS;
-//    } else if (et == MouseEvent.MOUSE_RELEASED) {
-//      peAction = processing.event.MouseEvent.RELEASE;
 
     int modifiers = 0;
     if (fxEvent.isShiftDown()) {
@@ -827,20 +845,19 @@ public class PSurfaceFX implements PSurface {
     }
 
     int button = 0;
-    if (fxEvent.isPrimaryButtonDown()) {
-      button = PConstants.LEFT;
-    } else if (fxEvent.isSecondaryButtonDown()) {
-      button = PConstants.RIGHT;
-    } else if (fxEvent.isMiddleButtonDown()) {
-      button = PConstants.CENTER;
-    }
-
-    // If running on Mac OS, allow ctrl-click as right mouse.
-    // Verified to be necessary with Java 8u45.
-    if (PApplet.platform == PConstants.MACOSX &&
-        fxEvent.isControlDown() &&
-        button == PConstants.LEFT) {
-      button = PConstants.RIGHT;
+    switch (fxEvent.getButton()) {
+      case PRIMARY:
+        button = PConstants.LEFT;
+        break;
+      case SECONDARY:
+        button = PConstants.RIGHT;
+        break;
+      case MIDDLE:
+        button = PConstants.CENTER;
+        break;
+      case NONE:
+        // not currently handled
+        break;
     }
 
     //long when = nativeEvent.getWhen();  // from AWT
@@ -853,23 +870,37 @@ public class PSurfaceFX implements PSurface {
                                                      x, y, button, count));
   }
 
+  // https://docs.oracle.com/javase/8/javafx/api/javafx/scene/input/ScrollEvent.html
+  protected void fxScrollEvent(ScrollEvent fxEvent) {
+    // the number of steps/clicks on the wheel for a mouse wheel event.
+    int count = (int) -(fxEvent.getDeltaY() / fxEvent.getMultiplierY());
 
-  // https://docs.oracle.com/javafx/2/api/javafx/scene/input/ScrollEvent.html
-  protected void fxScrollEvent(ScrollEvent event) {
-//   //case java.awt.event.MouseWheelEvent.WHEEL_UNIT_SCROLL:
-//    case java.awt.event.MouseEvent.MOUSE_WHEEL:
-//      peAction = MouseEvent.WHEEL;
-//      /*
-//      if (preciseWheelMethod != null) {
-//        try {
-//          peAmount = ((Double) preciseWheelMethod.invoke(nativeEvent, (Object[]) null)).floatValue();
-//        } catch (Exception e) {
-//          preciseWheelMethod = null;
-//        }
-//      }
-//      */
-//      peCount = ((MouseWheelEvent) nativeEvent).getWheelRotation();
-//      break;
+    int action = processing.event.MouseEvent.WHEEL;
+
+    int modifiers = 0;
+    if (fxEvent.isShiftDown()) {
+      modifiers |= processing.event.Event.SHIFT;
+    }
+    if (fxEvent.isControlDown()) {
+      modifiers |= processing.event.Event.CTRL;
+    }
+    if (fxEvent.isMetaDown()) {
+      modifiers |= processing.event.Event.META;
+    }
+    if (fxEvent.isAltDown()) {
+      modifiers |= processing.event.Event.ALT;
+    }
+
+    // FX does not supply button info
+    int button = 0;
+
+    long when = System.currentTimeMillis();
+    int x = (int) fxEvent.getX();  // getSceneX()?
+    int y = (int) fxEvent.getY();
+
+    sketch.postEvent(new processing.event.MouseEvent(fxEvent, when,
+                                                     action, modifiers,
+                                                     x, y, button, count));
   }
 
 

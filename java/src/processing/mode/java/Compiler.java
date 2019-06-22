@@ -39,7 +39,7 @@ public class Compiler {
 
   static HashMap<String, String> importSuggestions;
   static {
-    importSuggestions = new HashMap<String, String>();
+    importSuggestions = new HashMap<>();
     importSuggestions.put("Arrays", "java.util.Arrays");
     importSuggestions.put("Collections", "java.util.Collections");
     importSuggestions.put("Date", "java.util.Date");
@@ -54,7 +54,7 @@ public class Compiler {
    * @param sketch Sketch object to be compiled, used for placing exceptions
    * @param buildPath Where the temporary files live and will be built from.
    * @return true if successful.
-   * @throws RunnerException Only if there's a problem. Only then.
+   * @throws SketchException Only if there's a problem. Only then.
    */
   static public boolean compile(JavaBuild build) throws SketchException {
 
@@ -68,6 +68,7 @@ public class Compiler {
       //"-noExit",  // not necessary for ecj
       "-source", "1.7",
       "-target", "1.7",
+      "-encoding", "utf8",
       "-classpath", build.getClassPath(),
       "-nowarn", // we're not currently interested in warnings (works in ecj)
       "-d", build.getBinFolder().getAbsolutePath() // output the classes in the buildPath
@@ -166,6 +167,8 @@ public class Compiler {
           exception = new SketchException(errorMessage);
         }
 
+        String[] parts = null;
+
         if (errorMessage.startsWith("The import ") &&
             errorMessage.endsWith("cannot be resolved")) {
           // The import poo cannot be resolved
@@ -188,7 +191,8 @@ public class Compiler {
                                    "You might be missing a library.");
               System.err.println("Libraries must be " +
                                  "installed in a folder named 'libraries' " +
-                                 "inside the 'sketchbook' folder.");
+                                 "inside the sketchbook folder " +
+                                 "(see the Preferences window).");
             }
           }
 
@@ -211,8 +215,8 @@ public class Compiler {
             String suggestion = importSuggestions.get(what);
             if (suggestion != null) {
               System.err.println("You may need to add \"import " + suggestion + ";\" to the top of your sketch.");
-              System.err.println("To make sketches more portable, imports that are not part of the Processing API have been removed from Processing 2.0.");
-              System.err.println("See the changes page for more information: http://wiki.processing.org/w/Changes");
+              System.err.println("To make sketches more portable, imports that are not part of the Processing API were removed in Processing 2.");
+              System.err.println("See the changes page for more information: https://github.com/processing/processing/wiki/Changes");
             }
           }
 
@@ -252,9 +256,18 @@ public class Compiler {
           // "Duplicate nested type xxx"
           // "Duplicate local variable xxx"
 
+        } else if (null != (parts = PApplet.match(errorMessage,
+                "literal (\\S*) of type (\\S*) is out of range"))) {
+          if ("int".equals(parts[2])) {
+            exception.setMessage("The type int can't handle numbers that big. Try "
+                + parts[1] + "L to upgrade to long.");
+          } else {
+            // I'd like to give an essay on BigInteger and BigDecimal, but
+            // this margin is too narrow to contain it.
+            exception.setMessage("Even the type " + parts[2] + " can't handle "
+                + parts[1] + ". Research big numbers in Java.");
+          }
         } else {
-          String[] parts = null;
-
           // The method xxx(String) is undefined for the type Temporary_XXXX_XXXX
           //xxx("blah");
           // The method xxx(String, int) is undefined for the type Temporary_XXXX_XXXX

@@ -53,8 +53,7 @@ public abstract class Mode {
   protected File folder;
 
   protected TokenMarker tokenMarker;
-  protected Map<String, String> keywordToReference =
-    new HashMap<String, String>();
+  protected Map<String, String> keywordToReference = new HashMap<>();
 
   protected Settings theme;
 //  protected Formatter formatter;
@@ -166,7 +165,13 @@ public abstract class Mode {
               if (htmlFilename.endsWith("_")) {
                 keyword += "_";
               }
-              keywordToReference.put(keyword, htmlFilename);
+              // Allow the bare size() command to override the lookup
+              // for StringList.size() and others, but not vice-versa.
+              // https://github.com/processing/processing/issues/4224
+              boolean seen = keywordToReference.containsKey(keyword);
+              if (!seen || (seen && keyword.equals(htmlFilename))) {
+                keywordToReference.put(keyword, htmlFilename);
+              }
             }
           }
         }
@@ -206,10 +211,16 @@ public abstract class Mode {
         theme.load(modeTheme);
       }
 
+      // Against my better judgment, adding the ability to override themes
+      // https://github.com/processing/processing/issues/5445
+      File sketchbookTheme =
+        new File(Base.getSketchbookFolder(), "theme.txt");
+      if (sketchbookTheme.exists()) {
+        theme.load(sketchbookTheme);
+      }
+
       // other things that have to be set explicitly for the defaults
       theme.setColor("run.window.bgcolor", SystemColor.control);
-
-//      loadBackground();
 
     } catch (IOException e) {
       Messages.showError("Problem loading theme.txt",
@@ -225,6 +236,71 @@ public abstract class Mode {
 
   public InputStream getContentStream(String path) throws FileNotFoundException {
     return new FileInputStream(getContentFile(path));
+  }
+
+
+  /**
+   * Add files to a folder to create an empty sketch. This can be overridden
+   * to add template files to a sketch for Modes that need them.
+   *
+   * @param sketchFolder the directory where the new sketch should live
+   * @param sketchName the name of the new sketch
+   * @return the main file for the sketch to be opened via handleOpen()
+   * @throws IOException if the file somehow already exists
+   */
+  public File addTemplateFiles(File sketchFolder,
+                               String sketchName) throws IOException {
+    // Make an empty .pde file
+    File newbieFile =
+      new File(sketchFolder, sketchName + "." + getDefaultExtension());
+
+    try {
+      // First see if the user has overridden the default template
+      File templateFolder = checkSketchbookTemplate();
+
+      // Next see if the Mode has its own template
+      if (templateFolder == null) {
+        templateFolder = getTemplateFolder();
+      }
+      if (templateFolder.exists()) {
+        Util.copyDir(templateFolder, sketchFolder);
+        File templateFile =
+          new File(sketchFolder, "sketch." + getDefaultExtension());
+        if (!templateFile.renameTo(newbieFile)) {
+          System.err.println("Error while assigning the sketch template.");
+        }
+      } else {
+        if (!newbieFile.createNewFile()) {
+          System.err.println(newbieFile + " already exists.");
+        }
+      }
+    } catch (Exception e) {
+      // just spew out this error and try to recover below
+      e.printStackTrace();
+    }
+    return newbieFile;
+  }
+
+
+  /**
+   * See if the user has their own template for this Mode. If the default
+   * extension is "pde", this will look for a file called sketch.pde to use
+   * as the template for all sketches.
+   */
+  protected File checkSketchbookTemplate() {
+    File user = new File(Base.getSketchbookTemplatesFolder(), getTitle());
+    if (user.exists()) {
+      File template = new File(user, "sketch." + getDefaultExtension());
+      if (template.exists() && template.canRead()) {
+        return user;
+      }
+    }
+    return null;
+  }
+
+
+  public File getTemplateFolder() {
+    return getContentFile("template");
   }
 
 
@@ -282,11 +358,11 @@ public abstract class Mode {
   public void rebuildLibraryList() {
     //new Exception("Rebuilding library list").printStackTrace(System.out);
     // reset the table mapping imports to libraries
-    HashMap<String, List<Library>> importToLibraryTable = new HashMap<>();
+    Map<String, List<Library>> newTable = new HashMap<>();
 
     Library core = getCoreLibrary();
     if (core != null) {
-      core.addPackageList(importToLibraryTable);
+      core.addPackageList(newTable);
     }
 
     coreLibraries = Library.list(librariesFolder);
@@ -304,28 +380,16 @@ public abstract class Mode {
     coreLibraries.addAll(foundationLibraries);
     contribLibraries.removeAll(foundationLibraries);
 
-    /*
-    File sketchbookLibs = Base.getSketchbookLibrariesFolder();
-    File videoFolder = new File(sketchbookLibs, "video");
-    if (videoFolder.exists()) {
-      coreLibraries.add(new Library(videoFolder));
-    }
-    File soundFolder = new File(sketchbookLibs, "sound");
-    if (soundFolder.exists()) {
-      coreLibraries.add(new Library(soundFolder));
-    }
-    */
-
     for (Library lib : coreLibraries) {
-      lib.addPackageList(importToLibraryTable);
+      lib.addPackageList(newTable);
     }
 
     for (Library lib : contribLibraries) {
-      lib.addPackageList(importToLibraryTable);
+      lib.addPackageList(newTable);
     }
 
     // Make this Map thread-safe
-    this.importToLibraryTable = Collections.unmodifiableMap(importToLibraryTable);
+    importToLibraryTable = Collections.unmodifiableMap(newTable);
 
     if (base != null) {
       base.getEditors().forEach(Editor::librariesChanged);
@@ -541,7 +605,7 @@ public abstract class Mode {
       contrib.setEnabled(false);
       importMenu.add(contrib);
 
-      HashMap<String, JMenu> subfolders = new HashMap<String, JMenu>();
+      HashMap<String, JMenu> subfolders = new HashMap<>();
 
       for (Library library : contribLibraries) {
         JMenuItem item = new JMenuItem(library.getName());
@@ -568,6 +632,18 @@ public abstract class Mode {
 
 
   /**
+   * Require examples to explicitly state that they're compatible with this
+   * Mode before they're included. Helpful for Modes like p5js or Python
+   * where the .java examples cannot be used.
+   * @since 3.2
+   * @return true if an examples package must list this Mode's identifier
+   */
+  public boolean requireExampleCompatibility() {
+    return false;
+  }
+
+
+  /**
    * Override this to control the order of the first set of example folders
    * and how they appear in the examples window.
    */
@@ -587,6 +663,7 @@ public abstract class Mode {
       if (visible) {
         bounds = examplesFrame.getBounds();
         examplesFrame.setVisible(false);
+        examplesFrame.dispose();
       }
       examplesFrame = null;
       if (visible) {
@@ -622,11 +699,19 @@ public abstract class Mode {
 
   /** Sketchbook has changed, update it on next viewing. */
   public void rebuildSketchbookFrame() {
-    boolean wasVisible =
-      (sketchbookFrame == null) ? false : sketchbookFrame.isVisible();
-    sketchbookFrame = null;  // Force a rebuild
-    if (wasVisible) {
-      showSketchbookFrame();
+    if (sketchbookFrame != null) {
+      boolean visible = sketchbookFrame.isVisible();
+      Rectangle bounds = null;
+      if (visible) {
+        bounds = sketchbookFrame.getBounds();
+        sketchbookFrame.setVisible(false);
+        sketchbookFrame.dispose();
+      }
+      sketchbookFrame = null;
+      if (visible) {
+        showSketchbookFrame();
+        sketchbookFrame.setBounds(bounds);
+      }
     }
   }
 
@@ -675,7 +760,7 @@ public abstract class Mode {
 
 
   public Image loadImageX(String filename) {
-    final int res = Toolkit.highResDisplay() ? 2 : 1;
+    final int res = Toolkit.highResImages() ? 2 : 1;
     return loadImage(filename + "-" + res +  "x.png");
   }
 
@@ -699,16 +784,24 @@ public abstract class Mode {
   }
 
 
-  //public TokenMarker getTokenMarker() throws IOException {
-  //  File keywordsFile = new File(folder, "keywords.txt");
-  //  return new PdeKeywords(keywordsFile);
-  //}
+  /**
+   * Specialized version of getTokenMarker() that can be overridden to
+   * provide different TokenMarker objects for different file types.
+   * @since 3.2
+   * @param code the code for which we need a TokenMarker
+   */
+  public TokenMarker getTokenMarker(SketchCode code) {
+    return getTokenMarker();
+  }
+
+
   public TokenMarker getTokenMarker() {
     return tokenMarker;
   }
 
+
   protected TokenMarker createTokenMarker() {
-    return new PdeKeywords();
+    return new PdeTokenMarker();
   }
 
 
@@ -931,9 +1024,14 @@ public abstract class Mode {
     if (targetFolder != null) {
       // Nuke the old applet/application folder because it can cause trouble
       if (Preferences.getBoolean("export.delete_target_folder")) {
-//        System.out.println("temporarily skipping deletion of " + targetFolder);
-        Util.removeDir(targetFolder);
-        //      targetFolder.renameTo(dest);
+        if (targetFolder.exists()) {
+          try {
+            Platform.deleteFile(targetFolder);
+          } catch (IOException e) {
+            // ignore errors/continue; likely to be ok
+            e.printStackTrace();
+          }
+        }
       }
       // Create a fresh output folder (needed before preproc is run next)
       targetFolder.mkdirs();
